@@ -320,7 +320,7 @@ def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None)
     fig.update_layout(
         title=title,
         xaxis_title="CDS Index",
-        yaxis_title="Closest match",
+        yaxis_title="Protein Index",
         height=400,
         width=1200,
         legend_title="Domain"
@@ -408,14 +408,14 @@ def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_d
         customdata=customdata_transposed
     ))
     
-    title = "Similarity Heatmap"
+    title = "Cosine Similarity (ESM-C) Heatmap"
     if selected_domain and selected_domain != "All Domains":
         title += f" - Sorted by {selected_domain} first, then by similarity"
     
     fig.update_layout(
         title=title,
-        xaxis_title="Array Index",
-        yaxis_title="Position in Array",
+        xaxis_title="CDS Index",
+        yaxis_title="Protein Index",    
         height=400,
         width=1200
     )
@@ -424,14 +424,14 @@ def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_d
 def main():
     st.set_page_config(page_title="Protein Accession Visualizer", layout="wide")
     
-    st.title("Protein Accession Visualization Dashboard")
+    st.title("Unnotate: Annotation of Proteins with Unknown function + Uncertainty quantification + Uniprot Mapping")
     
     # Dataset selection dropdown
     st.sidebar.header("Dataset Selection")
     dataset_type = st.sidebar.selectbox(
         "Choose Dataset:",
         ["Virus", "Bacteria"],
-        help="Select which dataset to load from local files"
+        help="Select which default  dataset to visualize"
     )
     
     # Always show upload interface
