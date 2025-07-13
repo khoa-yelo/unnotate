@@ -81,32 +81,32 @@ def process_uploaded_zip(uploaded_file):
         return None, None, None
 
 @st.cache_data
-def load_data():
+def load_data(dataset_type="Virus"):
     """Load and cache the protein data"""
     # Set up path logic for cloud deployment
     BASE_DIR = Path(__file__).resolve().parent  
-    REPO_ROOT = BASE_DIR.parent                 
     data_path = BASE_DIR / "data"
+    
+    # Determine file prefix based on dataset type
+    prefix = "viral" if dataset_type == "Virus" else "bacterial"
     
     # Try multiple possible paths for the CSV file
     csv_paths = [
-        "viral_parsed_uniprot_swiss_data.csv",
-        "data/viral_parsed_uniprot_swiss_data.csv",
-        str(data_path / "viral_parsed_uniprot_swiss_data.csv"),
-        "../data/viral_parsed_uniprot_swiss_data.csv",
-        "data/unnotate/viral_parsed_uniprot_swiss_data.csv",
-        "../data/unnotate/viral_parsed_uniprot_swiss_data.csv",
+        f"{prefix}_parsed_uniprot_swiss_data.csv",
+        f"data/{prefix}_parsed_uniprot_swiss_data.csv",
+        str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv"),
+        f"../data/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"../data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
     ]
     
     df = None
     for path in csv_paths:
         if os.path.exists(path):
             df = pd.read_csv(path)
-            st.info(f"✅ Found CSV file at: {path}")
             break
     
     if df is None:
-        st.warning(f"❌ Could not find CSV file. Checked paths: {csv_paths}")
         return None, None, None
     
     # Try to load numpy arrays
@@ -115,10 +115,10 @@ def load_data():
     
     # Try multiple possible paths for numpy files
     npy_paths = [
-        ("viral_accession_arrays.npy", "viral_similarity_array.npy"),
-        ("data/viral_accession_arrays.npy", "data/viral_similarity_array.npy"),
-        (str(data_path / "viral_accession_arrays.npy"), str(data_path / "viral_similarity_array.npy")),
-        ("../data/viral_accession_arrays.npy", "../data/viral_similarity_array.npy"),
+        (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy"),
+        (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy"),
+        (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy")),
+        (f"../data/{prefix}_accession_arrays.npy", f"../data/{prefix}_similarity_array.npy"),
     ]
     
     for acc_path, sim_path in npy_paths:
@@ -135,15 +135,12 @@ def load_data():
                     arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
                     accession_arrays.append(arr)
                 
-                st.info(f"✅ Found numpy files at: {acc_path} and {sim_path}")
                 break
                 
             except Exception as e:
-                st.warning(f"Failed to load {acc_path}: {e}")
                 continue
     
     if accession_arrays is None:
-        st.warning(f"❌ Could not find numpy files. Checked paths: {npy_paths}")
         return None, None, None
     
     return df, accession_arrays, similarity_array
@@ -429,36 +426,13 @@ def main():
     
     st.title("Protein Accession Visualization Dashboard")
     
-    # Debug: Show directory information
-    import os
-    from pathlib import Path
-    
-    current_dir = os.getcwd()
-    BASE_DIR = Path(__file__).resolve().parent
-    REPO_ROOT = BASE_DIR.parent
-    data_path = REPO_ROOT / "data"
-    
-    st.sidebar.header("🔍 Debug Information")
-    st.sidebar.write(f"**Current Directory:** {current_dir}")
-    st.sidebar.write(f"**BASE_DIR:** {BASE_DIR}")
-    st.sidebar.write(f"**REPO_ROOT:** {REPO_ROOT}")
-    st.sidebar.write(f"**Data Path:** {data_path}")
-    
-    # Check if key files exist
-    st.sidebar.write("**File Check:**")
-    files_to_check = [
-        "viral_parsed_uniprot_swiss_data.csv",
-        "data/viral_parsed_uniprot_swiss_data.csv",
-        str(data_path / "viral_parsed_uniprot_swiss_data.csv"),
-        "viral_accession_arrays.npy",
-        "data/viral_accession_arrays.npy",
-        str(data_path / "viral_accession_arrays.npy")
-    ]
-    
-    for file_path in files_to_check:
-        exists = os.path.exists(file_path)
-        status = "✅" if exists else "❌"
-        st.sidebar.write(f"{status} {file_path}")
+    # Dataset selection dropdown
+    st.sidebar.header("Dataset Selection")
+    dataset_type = st.sidebar.selectbox(
+        "Choose Dataset:",
+        ["Virus", "Bacteria"],
+        help="Select which dataset to load from local files"
+    )
     
     # Always show upload interface
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
@@ -479,28 +453,30 @@ def main():
         else:
             # Try to load from local files if no upload
             # Set up path logic for cloud deployment
-            BASE_DIR = Path(__file__).resolve().parent   # e.g. /home/appuser/
-            REPO_ROOT = BASE_DIR.parent                   # up one level if needed
+            BASE_DIR = Path(__file__).resolve().parent
             data_path = BASE_DIR / "data"
+            
+            # Determine file prefix based on dataset type
+            prefix = "viral" if dataset_type == "Virus" else "bacterial"
             
             # Check multiple possible file locations
             possible_files = [
                 # Current directory
-                ("viral_accession_arrays.npy", "viral_similarity_array.npy", "viral_parsed_uniprot_swiss_data.csv"),
+                (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_parsed_uniprot_swiss_data.csv"),
                 # Data directory
-                (str(data_path / "viral_accession_arrays.npy"), str(data_path / "viral_similarity_array.npy"), str(data_path / "viral_parsed_uniprot_swiss_data.csv")),
+                (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv")),
                 # Relative paths
-                ("data/viral_accession_arrays.npy", "data/viral_similarity_array.npy", "data/viral_parsed_uniprot_swiss_data.csv")
+                (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy", f"data/{prefix}_parsed_uniprot_swiss_data.csv")
             ]
             
             files_found = False
             for acc_file, sim_file, csv_file in possible_files:
                 if os.path.exists(acc_file) and os.path.exists(sim_file) and os.path.exists(csv_file):
                     # Found a complete set of files
-                    with st.spinner("Loading data from local files..."):
-                        df, accession_arrays, similarity_array = load_data()
+                    with st.spinner(f"Loading {dataset_type.lower()} data from local files..."):
+                        df, accession_arrays, similarity_array = load_data(dataset_type)
                         if df is not None and accession_arrays is not None and similarity_array is not None:
-                            st.success(f"✅ Data loaded from local files!")
+                            st.success(f"✅ {dataset_type} data loaded from local files!")
                             files_found = True
                             break
             
