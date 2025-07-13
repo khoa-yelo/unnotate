@@ -2,11 +2,12 @@
 *.npy
 *.h5
 *.hdf5
-*.npy
-*.csv
 *.zip
 
-# CSV data files (if large)
+# Large CSV data files (exclude large ones, allow samples)
+parsed_uniprot_swiss_data.csv
+full_*.csv
+large_*.csv
 *.csv
 
 # Python cache

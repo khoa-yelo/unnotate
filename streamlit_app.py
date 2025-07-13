@@ -445,28 +445,40 @@ def main():
     if missing_files:
         st.warning(f"⚠️ Missing data files: {', '.join(missing_files)}")
         
-        # Try to download from GitHub release
-        with st.expander("📥 Download Data from GitHub Release", expanded=True):
-            st.write("The app needs data files to run. You can download them from the GitHub release:")
+        # Auto-download for cloud deployment
+        if st.secrets.get("GITHUB_REPO_OWNER") and st.secrets.get("GITHUB_REPO_NAME"):
+            # Use secrets for cloud deployment
+            repo_owner = st.secrets["GITHUB_REPO_OWNER"]
+            repo_name = st.secrets["GITHUB_REPO_NAME"]
+            release_tag = st.secrets.get("GITHUB_RELEASE_TAG", "latest")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                repo_owner = st.text_input("Repository Owner", value="khoa-yelo")
-                repo_name = st.text_input("Repository Name", value="unnotate")
-            
-            with col2:
-                release_tag = st.text_input("Release Tag", value="latest", 
-                                           help="Use 'latest' for the most recent release, or specify a tag like 'v1.0.1'")
+            st.info("🔄 Auto-downloading data from GitHub release...")
+            success = download_from_github_release(repo_owner, repo_name, release_tag)
+            if success:
+                st.rerun()
+        else:
+            # Manual download interface for local development
+            with st.expander("📥 Download Data from GitHub Release", expanded=True):
+                st.write("The app needs data files to run. You can download them from the GitHub release:")
                 
-                if st.button("Download Data"):
-                    if repo_owner and repo_name:
-                        success = download_from_github_release(repo_owner, repo_name, release_tag)
-                        if success:
-                            st.rerun()  # Refresh the page
-                    else:
-                        st.error("Please enter repository owner and name")
-            
-            st.info("💡 **Alternative**: You can also manually download the `protein_data_v1.0.zip` file from the GitHub releases page and extract it here.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    repo_owner = st.text_input("Repository Owner", value="khoa-yelo")
+                    repo_name = st.text_input("Repository Name", value="unnotate")
+                
+                with col2:
+                    release_tag = st.text_input("Release Tag", value="latest", 
+                                               help="Use 'latest' for the most recent release, or specify a tag like 'v1.0.1'")
+                    
+                    if st.button("Download Data"):
+                        if repo_owner and repo_name:
+                            success = download_from_github_release(repo_owner, repo_name, release_tag)
+                            if success:
+                                st.rerun()  # Refresh the page
+                        else:
+                            st.error("Please enter repository owner and name")
+                
+                st.info("💡 **Alternative**: You can also manually download the `protein_data_v1.0.zip` file from the GitHub releases page and extract it here.")
     
     # Load data
     with st.spinner("Loading data..."):
