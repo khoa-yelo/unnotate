@@ -10,6 +10,7 @@ import requests
 import zipfile
 import tempfile
 from matplotlib import cm, colors as mcolors
+import glob
 
 # Helper for categorical color mapping
 def get_categorical_colormap(categories):
@@ -73,12 +74,21 @@ def download_from_github_release(repo_owner, repo_name, release_tag="latest"):
             # Extract to current directory
             with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
                 zip_ref.extractall('.')
+                st.info(f"Extracted files: {zip_ref.namelist()}")
             
             # Clean up temporary file
             os.unlink(tmp_path)
         
-        st.success("✅ Data files downloaded and extracted successfully!")
-        return True
+        # Debug: List files in current directory
+        extracted_files = glob.glob("*.csv") + glob.glob("*.npy")
+        st.info(f"Files in current directory after extraction: {extracted_files}")
+        # Check for required files
+        missing = [f for f in required_files if not os.path.exists(f)]
+        if missing:
+            st.error(f"❌ Still missing after extraction: {missing}")
+        else:
+            st.success("✅ All required files present after extraction!")
+        return len(missing) == 0
         
     except Exception as e:
         st.error(f"Failed to download from GitHub: {e}")
