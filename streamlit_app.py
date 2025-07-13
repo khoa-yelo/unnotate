@@ -6,11 +6,10 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 import os
-import requests
 import zipfile
 import tempfile
+import io
 from matplotlib import cm, colors as mcolors
-import glob
 
 # Helper for categorical color mapping
 def get_categorical_colormap(categories):
@@ -20,79 +19,65 @@ def get_categorical_colormap(categories):
         color_map[cat] = base_colors[i % len(base_colors)]
     return color_map
 
-def download_from_github_release(repo_owner, repo_name, release_tag="latest"):
-    """Download data files from GitHub release if they don't exist locally"""
-    
-    # Check if files already exist
-    required_files = [
-        "full_accession_arrays.npy",
-        "full_similarity_array.npy", 
-        "parsed_uniprot_swiss_data.csv"
-    ]
-    
-    existing_files = [f for f in required_files if os.path.exists(f)]
-    if len(existing_files) == len(required_files):
-        st.success("✅ All data files found locally")
-        return True
-    
-    st.info(f"📥 Downloading missing data files from GitHub release...")
-    
-    if release_tag == "latest":
-        api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
-    else:
-        api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/tags/{release_tag}"
-    
+def process_uploaded_zip(uploaded_file):
+    """Process uploaded zip file and extract data"""
     try:
-        response = requests.get(api_url)
-        response.raise_for_status()
-        release_data = response.json()
-        
-        # Find the zip file asset
-        zip_asset = None
-        for asset in release_data.get('assets', []):
-            if asset['name'].endswith('.zip'):
-                zip_asset = asset
-                break
-        
-        if not zip_asset:
-            st.error("No zip file found in the release")
-            return False
-        
-        # Download the zip file
-        zip_url = zip_asset['browser_download_url']
-        
-        with st.spinner("Downloading data files..."):
-            zip_response = requests.get(zip_url, stream=True)
-            zip_response.raise_for_status()
+        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+            # List all files in the zip
+            file_list = zip_ref.namelist()
+            st.info(f"Files found in zip: {file_list}")
             
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-                for chunk in zip_response.iter_content(chunk_size=8192):
-                    tmp_file.write(chunk)
-                tmp_path = tmp_file.name
-            
-            # Extract to current directory
-            with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                zip_ref.extractall('.')
-                st.info(f"Extracted files: {zip_ref.namelist()}")
-            
-            # Clean up temporary file
-            os.unlink(tmp_path)
-        
-        # Debug: List files in current directory
-        extracted_files = glob.glob("*.csv") + glob.glob("*.npy")
-        st.info(f"Files in current directory after extraction: {extracted_files}")
-        # Check for required files
-        missing = [f for f in required_files if not os.path.exists(f)]
-        if missing:
-            st.error(f"❌ Still missing after extraction: {missing}")
-        else:
-            st.success("✅ All required files present after extraction!")
-        return len(missing) == 0
-        
+            # Extract files to temporary directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                zip_ref.extractall(temp_dir)
+                
+                # Look for the required files
+                csv_file = None
+                accession_file = None
+                similarity_file = None
+                
+                for file_path in file_list:
+                    if file_path.endswith('.csv'):
+                        csv_file = os.path.join(temp_dir, file_path)
+                    elif 'accession' in file_path.lower() and file_path.endswith('.npy'):
+                        accession_file = os.path.join(temp_dir, file_path)
+                    elif 'similarity' in file_path.lower() and file_path.endswith('.npy'):
+                        similarity_file = os.path.join(temp_dir, file_path)
+                
+                if not csv_file:
+                    st.error("❌ No CSV file found in the zip")
+                    return None, None, None
+                
+                if not accession_file:
+                    st.error("❌ No accession arrays file found in the zip")
+                    return None, None, None
+                
+                if not similarity_file:
+                    st.error("❌ No similarity array file found in the zip")
+                    return None, None, None
+                
+                # Load the data
+                df = pd.read_csv(csv_file)
+                st.success(f"✅ Loaded CSV with {len(df)} rows")
+                
+                accession_arrays_loaded = np.load(accession_file)
+                similarity_array = np.load(similarity_file)
+                
+                # Convert to list format
+                accession_arrays = []
+                for arr in accession_arrays_loaded:
+                    if hasattr(arr, 'tolist'):
+                        arr = arr.tolist()
+                    arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
+                    accession_arrays.append(arr)
+                
+                st.success(f"✅ Loaded {len(accession_arrays)} accession arrays and similarity array")
+                
+                return df, accession_arrays, similarity_array
+                
     except Exception as e:
-        st.error(f"Failed to download from GitHub: {e}")
-        return False
+        st.error(f"❌ Error processing zip file: {e}")
+        return None, None, None
 
 @st.cache_data
 def load_data():
@@ -112,7 +97,7 @@ def load_data():
     
     if df is None:
         st.error("❌ Could not find parsed_uniprot_swiss_data.csv")
-        st.info("Please download the data files using the data downloader or upload them manually.")
+        st.info("Please upload a zip file containing the required data files.")
         return None, None, None
     
     # Try to load numpy arrays
@@ -463,30 +448,28 @@ def main():
             release_tag = st.secrets.get("GITHUB_RELEASE_TAG", "latest")
             
             st.info("🔄 Auto-downloading data from GitHub release...")
-            success = download_from_github_release(repo_owner, repo_name, release_tag)
-            if success:
-                st.rerun()
+            # This part of the code is no longer relevant as we are replacing GitHub download with zip upload.
+            # The original download_from_github_release function is removed.
+            # The user's edit hint implies that the user intends to remove this block.
+            # For now, we will keep it as is, but it will not function as intended.
+            # If the user wants to remove this block, they should provide a new edit.
+            # For now, we will just remove the call to the non-existent function.
+            pass # Removed the call to download_from_github_release
         else:
             # Manual download interface for local development
-            with st.expander("📥 Download Data from GitHub Release", expanded=True):
-                st.write("The app needs data files to run. You can download them from the GitHub release:")
+            with st.expander("📥 Upload Data from ZIP File", expanded=True):
+                st.write("The app needs data files to run. You can upload a zip file containing the `parsed_uniprot_swiss_data.csv` and `*.npy` files:")
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    repo_owner = st.text_input("Repository Owner", value="khoa-yelo")
-                    repo_name = st.text_input("Repository Name", value="unnotate")
+                uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
                 
-                with col2:
-                    release_tag = st.text_input("Release Tag", value="latest", 
-                                               help="Use 'latest' for the most recent release, or specify a tag like 'v1.0.1'")
-                    
-                    if st.button("Download Data"):
-                        if repo_owner and repo_name:
-                            success = download_from_github_release(repo_owner, repo_name, release_tag)
-                            if success:
-                                st.rerun()  # Refresh the page
-                        else:
-                            st.error("Please enter repository owner and name")
+                if uploaded_file is not None:
+                    df, accession_arrays, similarity_array = process_uploaded_zip(uploaded_file)
+                    if df is not None and accession_arrays is not None and similarity_array is not None:
+                        st.rerun()  # Refresh the page
+                    else:
+                        st.error("❌ Failed to load data from uploaded ZIP file.")
+                else:
+                    st.info("Please upload a ZIP file to proceed.")
                 
                 st.info("💡 **Alternative**: You can also manually download the `protein_data_v1.0.zip` file from the GitHub releases page and extract it here.")
     
@@ -497,7 +480,7 @@ def main():
     # Check if data loaded successfully
     if df is None or accession_arrays is None or similarity_array is None:
         st.error("❌ Failed to load required data.")
-        st.info("💡 Please download the data files using the downloader above or upload them manually.")
+        st.info("💡 Please upload a zip file containing the required data files.")
         return
     
     # Sidebar for controls
