@@ -9,6 +9,7 @@ import os
 import zipfile
 import tempfile
 import io
+from pathlib import Path
 from matplotlib import cm, colors as mcolors
 
 # Helper for categorical color mapping
@@ -82,11 +83,17 @@ def process_uploaded_zip(uploaded_file):
 @st.cache_data
 def load_data():
     """Load and cache the protein data"""
+    # Set up path logic for cloud deployment
+    BASE_DIR = Path(__file__).resolve().parent  
+    REPO_ROOT = BASE_DIR.parent                 
+    data_path = REPO_ROOT / "data"
+    
     # Try multiple possible paths for the CSV file
     csv_paths = [
-        "parsed_uniprot_swiss_data.csv",
-        "data/unnotate/parsed_uniprot_swiss_data.csv",
-        "../data/unnotate/parsed_uniprot_swiss_data.csv"
+        "viral_parsed_uniprot_swiss_data.csv",
+        "data/unnotate/viral_parsed_uniprot_swiss_data.csv",
+        "../data/unnotate/viral_parsed_uniprot_swiss_data.csv",
+        str(data_path / "viral_parsed_uniprot_swiss_data.csv"),
     ]
     
     df = None
@@ -104,10 +111,8 @@ def load_data():
     
     # Try multiple possible paths for numpy files
     npy_paths = [
-        ("full_accession_arrays.npy", "full_similarity_array.npy"),
-        ("accession_arrays.npy", "similarity_array.npy"),
         ("viral_accession_arrays.npy", "viral_similarity_array.npy"),
-        ("bacterial_accession_arrays.npy", "bacterial_similarity_array.npy")
+        (str(data_path / "viral_accession_arrays.npy"), str(data_path / "viral_similarity_array.npy")),
     ]
     
     for acc_path, sim_path in npy_paths:
@@ -419,9 +424,9 @@ def main():
     # Always show upload interface
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
         st.write("Upload a zip file containing the required data files:")
-        st.write("- A CSV file (e.g., `parsed_uniprot_swiss_data.csv`)")
-        st.write("- A numpy file with accession arrays (e.g., `full_accession_arrays.npy`)")
-        st.write("- A numpy file with similarity data (e.g., `full_similarity_array.npy`)")
+        st.write("- A CSV file (e.g., `PREFIX_parsed_uniprot_swiss_data.csv`)")
+        st.write("- A numpy file with accession arrays (e.g., `PREFIX_accession_arrays.npy`)")
+        st.write("- A numpy file with similarity data (e.g., `PREFIX_similarity_array.npy`)")
         
         uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
         
@@ -434,21 +439,33 @@ def main():
                     st.error("❌ Failed to load data from uploaded ZIP file. Please check the file contents.")
         else:
             # Try to load from local files if no upload
-            required_files = [
-                "data/viral_accession_arrays.npy",
-                "data/viral_similarity_array.npy", 
-                "data/viral_parsed_uniprot_swiss_data.csv"
+            # Set up path logic for cloud deployment
+            BASE_DIR = Path(__file__).resolve().parent   # e.g. /home/appuser/
+            REPO_ROOT = BASE_DIR.parent                   # up one level if needed
+            data_path = REPO_ROOT / "data"
+            
+            # Check multiple possible file locations
+            possible_files = [
+                # Current directory
+                ("viral_accession_arrays.npy", "viral_similarity_array.npy", "viral_parsed_uniprot_swiss_data.csv"),
+                # Data directory
+                (str(data_path / "viral_accession_arrays.npy"), str(data_path / "viral_similarity_array.npy"), str(data_path / "viral_parsed_uniprot_swiss_data.csv")),
+                # Relative paths
+                ("data/viral_accession_arrays.npy", "data/viral_similarity_array.npy", "data/viral_parsed_uniprot_swiss_data.csv")
             ]
             
-            missing_files = [f for f in required_files if not os.path.exists(f)]
+            files_found = False
+            for acc_file, sim_file, csv_file in possible_files:
+                if os.path.exists(acc_file) and os.path.exists(sim_file) and os.path.exists(csv_file):
+                    # Found a complete set of files
+                    with st.spinner("Loading data from local files..."):
+                        df, accession_arrays, similarity_array = load_data()
+                        if df is not None and accession_arrays is not None and similarity_array is not None:
+                            st.success(f"✅ Data loaded from local files!")
+                            files_found = True
+                            break
             
-            if not missing_files:
-                # All files exist locally, load them
-                with st.spinner("Loading data from local files..."):
-                    df, accession_arrays, similarity_array = load_data()
-                    if df is not None and accession_arrays is not None and similarity_array is not None:
-                        st.success("✅ Data loaded from local files!")
-            else:
+            if not files_found:
                 df = None
                 accession_arrays = None
                 similarity_array = None
