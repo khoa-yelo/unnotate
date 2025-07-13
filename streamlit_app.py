@@ -5,6 +5,10 @@ import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import os
+import requests
+import zipfile
+import tempfile
 from matplotlib import cm, colors as mcolors
 
 # Helper for categorical color mapping
@@ -15,23 +19,128 @@ def get_categorical_colormap(categories):
         color_map[cat] = base_colors[i % len(base_colors)]
     return color_map
 
-@st.cache_data
-def load_data(accession_array_path, similarity_array_path):
-    """Load and cache the protein data"""
-    # Load your CSV file
-    df = pd.read_csv("data/unnotate/parsed_uniprot_swiss_data.csv")
+def download_from_github_release(repo_owner, repo_name, release_tag="latest"):
+    """Download data files from GitHub release if they don't exist locally"""
     
-    # Example data - replace with your actual data
-    if accession_array_path and similarity_array_path:
-        accession_arrays_loaded = np.load(accession_array_path)
-        similarity_array = np.load(similarity_array_path)
-        accession_arrays = []
-        for arr in accession_arrays_loaded:
-            if hasattr(arr, 'tolist'):
-                arr = arr.tolist()
-            arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
-            accession_arrays.append(arr)
+    # Check if files already exist
+    required_files = [
+        "full_accession_arrays.npy",
+        "full_similarity_array.npy", 
+        "parsed_uniprot_swiss_data.csv"
+    ]
+    
+    existing_files = [f for f in required_files if os.path.exists(f)]
+    if len(existing_files) == len(required_files):
+        st.success("✅ All data files found locally")
+        return True
+    
+    st.info(f"📥 Downloading missing data files from GitHub release...")
+    
+    if release_tag == "latest":
+        api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
     else:
+        api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/tags/{release_tag}"
+    
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        release_data = response.json()
+        
+        # Find the zip file asset
+        zip_asset = None
+        for asset in release_data.get('assets', []):
+            if asset['name'].endswith('.zip'):
+                zip_asset = asset
+                break
+        
+        if not zip_asset:
+            st.error("No zip file found in the release")
+            return False
+        
+        # Download the zip file
+        zip_url = zip_asset['browser_download_url']
+        
+        with st.spinner("Downloading data files..."):
+            zip_response = requests.get(zip_url, stream=True)
+            zip_response.raise_for_status()
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                for chunk in zip_response.iter_content(chunk_size=8192):
+                    tmp_file.write(chunk)
+                tmp_path = tmp_file.name
+            
+            # Extract to current directory
+            with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+                zip_ref.extractall('.')
+            
+            # Clean up temporary file
+            os.unlink(tmp_path)
+        
+        st.success("✅ Data files downloaded and extracted successfully!")
+        return True
+        
+    except Exception as e:
+        st.error(f"Failed to download from GitHub: {e}")
+        return False
+
+@st.cache_data
+def load_data():
+    """Load and cache the protein data"""
+    # Try multiple possible paths for the CSV file
+    csv_paths = [
+        "parsed_uniprot_swiss_data.csv",
+        "data/unnotate/parsed_uniprot_swiss_data.csv",
+        "../data/unnotate/parsed_uniprot_swiss_data.csv"
+    ]
+    
+    df = None
+    for path in csv_paths:
+        if os.path.exists(path):
+            df = pd.read_csv(path)
+            break
+    
+    if df is None:
+        st.error("❌ Could not find parsed_uniprot_swiss_data.csv")
+        st.info("Please download the data files using the data downloader or upload them manually.")
+        return None, None, None
+    
+    # Try to load numpy arrays
+    accession_arrays = None
+    similarity_array = None
+    
+    # Try multiple possible paths for numpy files
+    npy_paths = [
+        ("full_accession_arrays.npy", "full_similarity_array.npy"),
+        ("accession_arrays.npy", "similarity_array.npy"),
+        ("viral_accession_arrays.npy", "viral_similarity_array.npy"),
+        ("bacterial_accession_arrays.npy", "bacterial_similarity_array.npy")
+    ]
+    
+    for acc_path, sim_path in npy_paths:
+        if os.path.exists(acc_path) and os.path.exists(sim_path):
+            try:
+                accession_arrays_loaded = np.load(acc_path)
+                similarity_array = np.load(sim_path)
+                
+                # Convert to list format
+                accession_arrays = []
+                for arr in accession_arrays_loaded:
+                    if hasattr(arr, 'tolist'):
+                        arr = arr.tolist()
+                    arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
+                    accession_arrays.append(arr)
+                
+                st.success(f"✅ Loaded data from {acc_path} and {sim_path}")
+                break
+                
+            except Exception as e:
+                st.warning(f"Failed to load {acc_path}: {e}")
+                continue
+    
+    if accession_arrays is None:
+        st.warning("⚠️ Could not load numpy arrays, using sample data")
+        # Fallback to sample data
         accession_arrays = [
             ['P03756', 'Q21LK2', 'Q89EM9', 'Q03544', 'Q03546', 'P76515', 'A4IM80', 'B6JPK6', 'B5Z9N6', 'Q03547'],
             ['P43661', 'Q887Q8', 'Q8X5K6', 'P59791', 'P33128', 'Q88ND4', 'P70799', 'Q06062', 'P39632', 'P33409']
@@ -324,13 +433,50 @@ def main():
     
     st.title("Protein Accession Visualization Dashboard")
     
-    accession_array_path = "/home/jovyan/workspace/unnotate/full_accession_arrays.npy"
-    similarity_array_path = "/home/jovyan/workspace/unnotate/full_similarity_array.npy"
-    # accession_array_path = None
-    # similarity_array_path = None
+    # Check if data files exist, if not try to download from GitHub
+    required_files = [
+        "full_accession_arrays.npy",
+        "full_similarity_array.npy", 
+        "parsed_uniprot_swiss_data.csv"
+    ]
+    
+    missing_files = [f for f in required_files if not os.path.exists(f)]
+    
+    if missing_files:
+        st.warning(f"⚠️ Missing data files: {', '.join(missing_files)}")
+        
+        # Try to download from GitHub release
+        with st.expander("📥 Download Data from GitHub Release", expanded=True):
+            st.write("The app needs data files to run. You can download them from the GitHub release:")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                repo_owner = st.text_input("Repository Owner", value="khoa-yelo")
+                repo_name = st.text_input("Repository Name", value="unnotate")
+            
+            with col2:
+                release_tag = st.text_input("Release Tag", value="latest", 
+                                           help="Use 'latest' for the most recent release, or specify a tag like 'v1.0.1'")
+                
+                if st.button("Download Data"):
+                    if repo_owner and repo_name:
+                        success = download_from_github_release(repo_owner, repo_name, release_tag)
+                        if success:
+                            st.rerun()  # Refresh the page
+                    else:
+                        st.error("Please enter repository owner and name")
+            
+            st.info("💡 **Alternative**: You can also manually download the `protein_data_v1.0.zip` file from the GitHub releases page and extract it here.")
+    
     # Load data
     with st.spinner("Loading data..."):
-        df, accession_arrays, similarity_array = load_data(accession_array_path, similarity_array_path)
+        df, accession_arrays, similarity_array = load_data()
+    
+    # Check if data loaded successfully
+    if df is None or accession_arrays is None or similarity_array is None:
+        st.error("❌ Failed to load required data.")
+        st.info("💡 Please download the data files using the downloader above or upload them manually.")
+        return
     
     # Sidebar for controls
     st.sidebar.header("Controls")
