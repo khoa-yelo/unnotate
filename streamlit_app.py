@@ -20,6 +20,90 @@ def get_categorical_colormap(categories):
         color_map[cat] = base_colors[i % len(base_colors)]
     return color_map
 
+def precompute_domain_data(df, accession_arrays):
+    """Precompute domain information and hover text for all accessions"""
+    # Flatten all accessions
+    all_accessions = []
+    for accessions in accession_arrays:
+        all_accessions.extend(accessions)
+    
+    # Batch lookup using pandas isin() - do this once
+    mask = df['accession'].isin(all_accessions)
+    relevant_df = df[mask].set_index('accession')
+    
+    # Precompute domain and hover data for each accession
+    domain_cache = {}
+    hover_cache = {}
+    
+    for acc in all_accessions:
+        if acc in relevant_df.index:
+            row = relevant_df.loc[acc]
+            if pd.notna(row['taxonomy_lineage']):
+                taxonomy = row['taxonomy_lineage']
+                domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
+            else:
+                domain = 'Unknown'
+            
+            # Precompute hover text
+            function_text = row['function']
+            if pd.notna(function_text):
+                function_display = function_text[:50] + ('...' if len(function_text) > 50 else '')
+            else:
+                function_display = 'No function data'
+            
+            hover_text = f"""
+            <b>Accession:</b> {acc}<br>
+            <b>Name:</b> {row['name']}<br>
+            <b>Full Name:</b> {row['full_name'] if pd.notna(row['full_name']) else 'Not available'}<br>
+            <b>Organism:</b> {row['organism_common']}<br>
+            <b>Domain:</b> {domain}<br>
+            <b>Length:</b> {row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not available'}<br>
+            <b>Function:</b> {function_display}<br>
+            <b>Click to open UniProt page</b>
+            """
+        else:
+            domain = 'Unknown'
+            hover_text = f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>"
+        
+        domain_cache[acc] = domain
+        hover_cache[acc] = hover_text
+    
+    return domain_cache, hover_cache, relevant_df
+
+def precompute_sorted_arrays(accession_arrays, similarity_array, domain_cache, selected_domain):
+    """Precompute sorted arrays for a given domain selection"""
+    if not selected_domain or selected_domain == "All Domains":
+        return accession_arrays, similarity_array
+    
+    sorted_arrays = []
+    sorted_similarities = []
+    
+    for i, accessions in enumerate(accession_arrays):
+        similarities = similarity_array[i].tolist() if hasattr(similarity_array[i], 'tolist') else similarity_array[i]
+        
+        # Get protein data for sorting using cached domain data
+        protein_data = []
+        for j, acc in enumerate(accessions):
+            domain = domain_cache.get(acc, 'Unknown')
+            protein_data.append((acc, domain, similarities[j]))
+        
+        # Sort by domain first, then by similarity
+        def sort_key(item):
+            acc, domain, sim = item
+            if domain == selected_domain:
+                return (0, -sim)  # Selected domain first, then by similarity (descending)
+            else:
+                return (1, domain, -sim)  # Other domains, sorted by domain name, then similarity
+        
+        sorted_data = sorted(protein_data, key=sort_key)
+        sorted_accessions = [acc for acc, domain, sim in sorted_data]
+        sorted_sims = [sim for acc, domain, sim in sorted_data]
+        
+        sorted_arrays.append(sorted_accessions)
+        sorted_similarities.append(sorted_sims)
+    
+    return sorted_arrays, np.array(sorted_similarities)
+
 def process_uploaded_zip(uploaded_file):
     """Process uploaded zip file and extract data"""
     try:
@@ -145,63 +229,20 @@ def load_data(dataset_type="Virus"):
     
     return df, accession_arrays, similarity_array
 
-def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None):
+def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
     """Create heatmap visualization with optional domain-based sorting"""
-    # Flatten all accessions for batch processing first
-    all_accessions = []
-    for accessions in accession_arrays:
-        all_accessions.extend(accessions)
+    # Use precomputed data if available, otherwise compute it
+    if domain_cache is None or hover_cache is None:
+        domain_cache, hover_cache, relevant_df = precompute_domain_data(df, accession_arrays)
     
-    # Batch lookup using pandas isin() - do this once
-    mask = df['accession'].isin(all_accessions)
-    relevant_df = df[mask].set_index('accession')
-    
-    # If a domain is selected, sort the arrays
-    if selected_domain and selected_domain != "All Domains":
-        sorted_arrays = []
-        sorted_similarities = []
-        
-        for i, accessions in enumerate(accession_arrays):
-            similarities = similarity_array[i].tolist() if hasattr(similarity_array[i], 'tolist') else similarity_array[i]
-            
-            # Get protein data for sorting using vectorized lookup
-            protein_data = []
-            for j, acc in enumerate(accessions):
-                if acc in relevant_df.index:
-                    row = relevant_df.loc[acc]
-                    if pd.notna(row['taxonomy_lineage']):
-                        taxonomy = row['taxonomy_lineage']
-                        domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                    else:
-                        domain = 'Unknown'
-                else:
-                    domain = 'Unknown'
-                protein_data.append((acc, domain, similarities[j]))
-            
-            # Sort by domain first, then by similarity
-            def sort_key(item):
-                acc, domain, sim = item
-                if domain == selected_domain:
-                    return (0, -sim)  # Selected domain first, then by similarity (descending)
-                else:
-                    return (1, domain, -sim)  # Other domains, sorted by domain name, then similarity
-            
-            sorted_data = sorted(protein_data, key=sort_key)
-            sorted_accessions = [acc for acc, domain, sim in sorted_data]
-            sorted_sims = [sim for acc, domain, sim in sorted_data]
-            
-            sorted_arrays.append(sorted_accessions)
-            sorted_similarities.append(sorted_sims)
-        
-        # Use sorted arrays for visualization
-        arrays_to_visualize = sorted_arrays
-    else:
-        # Use original arrays
-        arrays_to_visualize = accession_arrays
+    # Get sorted arrays using precomputed function
+    arrays_to_visualize, sorted_similarity_array = precompute_sorted_arrays(
+        accession_arrays, similarity_array, domain_cache, selected_domain
+    )
     
     max_len = max(len(arr) for arr in arrays_to_visualize)
     
-    # Create domain data efficiently
+    # Create domain data efficiently using precomputed caches
     domain_data = []
     hover_texts = []
     customdata = []
@@ -212,37 +253,16 @@ def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None)
         row_urls = []
         
         for pos_idx, acc in enumerate(accessions):
-            # Use vectorized lookup
-            if acc in relevant_df.index:
-                row = relevant_df.loc[acc]
-                if pd.notna(row['taxonomy_lineage']):
-                    taxonomy = row['taxonomy_lineage']
-                    domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                else:
-                    domain = 'Unknown'
-                
-                # Create hover text efficiently
-                function_text = row['function']
-                if pd.notna(function_text):
-                    function_display = function_text[:50] + ('...' if len(function_text) > 50 else '')
-                else:
-                    function_display = 'No function data'
-                
-                hover_text = f"""
-                <b>CDS Index:</b> {cds_idx+1}<br>
-                <b>Position Index:</b> {pos_idx+1}<br>
-                <b>Accession:</b> {acc}<br>
-                <b>Name:</b> {row['name']}<br>
-                <b>Full Name:</b> {row['full_name'] if pd.notna(row['full_name']) else 'Not available'}<br>
-                <b>Organism:</b> {row['organism_common']}<br>
-                <b>Domain:</b> {domain}<br>
-                <b>Length:</b> {row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not available'}<br>
-                <b>Function:</b> {function_display}<br>
-                <b>Click to open UniProt page</b>
-                """
-            else:
-                domain = 'Unknown'
-                hover_text = f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>"
+            # Use precomputed domain and hover data
+            domain = domain_cache.get(acc, 'Unknown')
+            base_hover = hover_cache.get(acc, f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>")
+            
+            # Add CDS and position info to hover text
+            hover_text = f"""
+            <b>CDS Index:</b> {cds_idx+1}<br>
+            <b>Position Index:</b> {pos_idx+1}<br>
+            {base_hover}
+            """
             
             row_domains.append(domain)
             row_urls.append(f"https://www.uniprot.org/uniprot/{acc}")
@@ -327,61 +347,16 @@ def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None)
     )
     return fig
 
-def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_domain=None):
+def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None):
     """Create similarity heatmap with optional domain-based sorting"""
-    # Flatten all accessions for batch processing first
-    all_accessions = []
-    for accessions in accession_arrays:
-        all_accessions.extend(accessions)
+    # Use precomputed data if available, otherwise compute it
+    if domain_cache is None:
+        domain_cache, _, _ = precompute_domain_data(df, accession_arrays)
     
-    # Batch lookup using pandas isin() - do this once
-    mask = df['accession'].isin(all_accessions)
-    relevant_df = df[mask].set_index('accession')
-    
-    # If a domain is selected, sort the arrays
-    if selected_domain and selected_domain != "All Domains":
-        sorted_arrays = []
-        sorted_similarities = []
-        
-        for i, accessions in enumerate(accession_arrays):
-            similarities = similarity_array[i].tolist() if hasattr(similarity_array[i], 'tolist') else similarity_array[i]
-            
-            # Get protein data for sorting using vectorized lookup
-            protein_data = []
-            for j, acc in enumerate(accessions):
-                if acc in relevant_df.index:
-                    row = relevant_df.loc[acc]
-                    if pd.notna(row['taxonomy_lineage']):
-                        taxonomy = row['taxonomy_lineage']
-                        domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                    else:
-                        domain = 'Unknown'
-                else:
-                    domain = 'Unknown'
-                protein_data.append((acc, domain, similarities[j]))
-            
-            # Sort by domain first, then by similarity
-            def sort_key(item):
-                acc, domain, sim = item
-                if domain == selected_domain:
-                    return (0, -sim)  # Selected domain first, then by similarity (descending)
-                else:
-                    return (1, domain, -sim)  # Other domains, sorted by domain name, then similarity
-            
-            sorted_data = sorted(protein_data, key=sort_key)
-            sorted_accessions = [acc for acc, domain, sim in sorted_data]
-            sorted_sims = [sim for acc, domain, sim in sorted_data]
-            
-            sorted_arrays.append(sorted_accessions)
-            sorted_similarities.append(sorted_sims)
-        
-        # Use sorted similarities for visualization
-        similarity_data = np.array(sorted_similarities)
-        arrays_to_visualize = sorted_arrays
-    else:
-        # Use original similarity array
-        similarity_data = similarity_array
-        arrays_to_visualize = accession_arrays
+    # Get sorted arrays using precomputed function
+    arrays_to_visualize, similarity_data = precompute_sorted_arrays(
+        accession_arrays, similarity_array, domain_cache, selected_domain
+    )
     
     # Create customdata with UniProt URLs
     max_len = max(len(arr) for arr in arrays_to_visualize)
@@ -490,27 +465,47 @@ def main():
         st.info("💡 Please upload a zip file containing the required data files to get started.")
         return
     
+    # Initialize session state for caching
+    if 'domain_cache' not in st.session_state:
+        st.session_state.domain_cache = None
+        st.session_state.hover_cache = None
+        st.session_state.relevant_df = None
+        st.session_state.domains = None
+    
+    # Precompute domain data if not cached or if data changed
+    data_hash = hash(str(accession_arrays) + str(df.shape))
+    if (st.session_state.domain_cache is None or 
+        'data_hash' not in st.session_state or 
+        st.session_state.data_hash != data_hash):
+        
+        with st.spinner("Precomputing domain data..."):
+            st.session_state.domain_cache, st.session_state.hover_cache, st.session_state.relevant_df = precompute_domain_data(df, accession_arrays)
+            st.session_state.data_hash = data_hash
+            
+            # Precompute domains list
+            all_accessions = []
+            for accessions in accession_arrays:
+                all_accessions.extend(accessions)
+            
+            mask = st.session_state.relevant_df.index.isin(all_accessions)
+            relevant_subset = st.session_state.relevant_df[mask]
+            
+            domains = set()
+            for acc in all_accessions:
+                if acc in relevant_subset.index:
+                    row = relevant_subset.loc[acc]
+                    if pd.notna(row['taxonomy_lineage']):
+                        taxonomy = row['taxonomy_lineage']
+                        domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
+                        domains.add(domain)
+            
+            st.session_state.domains = sorted(list(domains))
+    
     # Sidebar for controls
     st.sidebar.header("Controls")
     
-    # Domain selection - use batch processing
-    all_accessions = []
-    for accessions in accession_arrays:
-        all_accessions.extend(accessions)
-    
-    # Batch lookup for domains
-    mask = df['accession'].isin(all_accessions)
-    relevant_df = df[mask]
-    
-    domains = set()
-    for acc in all_accessions:
-        row = relevant_df[relevant_df['accession'] == acc]
-        if not row.empty and pd.notna(row.iloc[0]['taxonomy_lineage']):
-            taxonomy = row.iloc[0]['taxonomy_lineage']
-            domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-            domains.add(domain)
-    
-    domains = sorted(list(domains))
+    # Domain selection using cached domains
+    domains = st.session_state.domains or ["All Domains"]
     selected_domain = st.sidebar.selectbox(
         "Select Domain to Highlight:",
         ["All Domains"] + domains
@@ -525,171 +520,82 @@ def main():
         st.info(f"Both heatmaps are sorted by {selected_domain} first, then by similarity within each domain.")
     
     st.subheader("Domain Heatmap")
-    fig = create_heatmap(df, accession_arrays, similarity_array, selected_domain if selected_domain != "All Domains" else None)
+    fig = create_heatmap(
+        df, accession_arrays, similarity_array, 
+        selected_domain if selected_domain != "All Domains" else None,
+        st.session_state.domain_cache, st.session_state.hover_cache
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     st.subheader("Similarity Heatmap")
-    sim_fig = create_similarity_heatmap(df, accession_arrays, similarity_array, selected_domain if selected_domain != "All Domains" else None)
+    sim_fig = create_similarity_heatmap(
+        df, accession_arrays, similarity_array, 
+        selected_domain if selected_domain != "All Domains" else None,
+        st.session_state.domain_cache
+    )
     st.plotly_chart(sim_fig, use_container_width=True)
     
     # Table view
     st.subheader("Protein Information Table")
     
-    # Create table data with proper formatting
+    # Create table data with proper formatting using cached data
     table_data = []
     
-    # Flatten all accessions for batch processing
-    all_accessions = []
-    for accessions in accession_arrays:
-        all_accessions.extend(accessions)
+    # Get sorted arrays using precomputed function
+    arrays_to_visualize, sorted_similarity_array = precompute_sorted_arrays(
+        accession_arrays, similarity_array, st.session_state.domain_cache, selected_domain
+    )
     
-    # Batch lookup using pandas isin()
-    mask = df['accession'].isin(all_accessions)
-    relevant_df = df[mask].set_index('accession')
+    # Use cached relevant_df
+    relevant_df = st.session_state.relevant_df
     
-    # If a domain is selected, sort the arrays first
-    if selected_domain and selected_domain != "All Domains":
-        # Sort each CDS array by domain and similarity
-        sorted_arrays = []
-        sorted_similarities = []
-        
-        for i, accessions in enumerate(accession_arrays):
-            similarities = similarity_array[i].tolist() if hasattr(similarity_array[i], 'tolist') else similarity_array[i]
-            
-            # Get protein data for sorting using vectorized lookup
-            protein_data = []
-            for j, acc in enumerate(accessions):
+    # Create table data: iterate by position first, then by CDS (alternating CDS order)
+    max_len = max(len(arr) for arr in arrays_to_visualize)
+    for pos in range(max_len):
+        for i in range(len(arrays_to_visualize)):  # For each CDS
+            accessions = arrays_to_visualize[i]
+            if pos < len(accessions):  # Only process if this position exists in this CDS
+                acc = accessions[pos]
+                
+                # Use cached data
                 if acc in relevant_df.index:
                     row = relevant_df.loc[acc]
-                    if pd.notna(row['taxonomy_lineage']):
-                        taxonomy = row['taxonomy_lineage']
-                        domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
+                    function_text = row['function']
+                    if pd.notna(function_text):
+                        function_display = function_text[:50] + '...' if len(function_text) > 50 else function_text
                     else:
-                        domain = 'Unknown'
-                else:
-                    domain = 'Unknown'
-                protein_data.append((acc, domain, similarities[j], j))  # Include original position
-            
-            # Sort by domain first, then by similarity
-            def sort_key(item):
-                acc, domain, sim, pos = item
-                if domain == selected_domain:
-                    return (0, -sim)  # Selected domain first, then by similarity (descending)
-                else:
-                    return (1, domain, -sim)  # Other domains, sorted by domain name, then similarity
-            
-            sorted_data = sorted(protein_data, key=sort_key)
-            sorted_accessions = [acc for acc, domain, sim, pos in sorted_data]
-            sorted_sims = [sim for acc, domain, sim, pos in sorted_data]
-            
-            sorted_arrays.append(sorted_accessions)
-            sorted_similarities.append(sorted_sims)
-        
-        # Create table data: iterate by position first, then by CDS (alternating CDS order)
-        max_len = max(len(arr) for arr in sorted_arrays)
-        for pos in range(max_len):
-            for i in range(len(accession_arrays)):  # For each CDS
-                sorted_accessions = sorted_arrays[i]
-                if pos < len(sorted_accessions):  # Only process if this position exists in this CDS
-                    acc = sorted_accessions[pos]
+                        function_display = 'No function data'
                     
-                    # Use vectorized lookup
-                    if acc in relevant_df.index:
-                        row = relevant_df.loc[acc]
-                        function_text = row['function']
-                        if pd.notna(function_text):
-                            function_display = function_text[:50] + '...' if len(function_text) > 50 else function_text
-                        else:
-                            function_display = 'No function data'
-                        
-                        # Get domain information
-                        if pd.notna(row['taxonomy_lineage']):
-                            taxonomy = row['taxonomy_lineage']
-                            domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                        else:
-                            domain = 'Unknown'
-                        
-                        # Create clickable accession link using HTML
-                        uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
-                        accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
-                        
-                        table_data.append({
-                            'CDS': f"CDS {i+1}",
-                            'Accession': accession_link,
-                            'Name': row['name'] if pd.notna(row['name']) else 'Not found',
-                            'Full Name': row['full_name'] if pd.notna(row['full_name']) else 'Not found',
-                            'Domain': domain,
-                            'Organism': row['organism_common'] if pd.notna(row['organism_common']) else 'Not found',
-                            'Length': row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not found',
-                            'Function': function_display
-                        })
-                    else:
-                        uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
-                        accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
-                        table_data.append({
-                            'CDS': f"CDS {i+1}",
-                            'Accession': accession_link,
-                            'Name': "Not found",
-                            'Full Name': "Not found",
-                            'Domain': "Unknown",
-                            'Organism': "Not found",
-                            'Length': "Not found",
-                            'Function': "Not found"
-                        })
-    else:
-        # Use original arrays without sorting
-        # Get the maximum length of any CDS array
-        max_len = max(len(arr) for arr in accession_arrays)
-        
-        # Iterate by position (index) first, then by CDS
-        for pos in range(max_len):
-            for i, accessions in enumerate(accession_arrays):
-                if pos < len(accessions):  # Only process if this position exists in this CDS
-                    acc = accessions[pos]
+                    # Get domain information from cache
+                    domain = st.session_state.domain_cache.get(acc, 'Unknown')
                     
-                    # Use vectorized lookup
-                    if acc in relevant_df.index:
-                        row = relevant_df.loc[acc]
-                        function_text = row['function']
-                        if pd.notna(function_text):
-                            function_display = function_text[:50] + '...' if len(function_text) > 50 else function_text
-                        else:
-                            function_display = 'No function data'
-                        
-                        # Get domain information
-                        if pd.notna(row['taxonomy_lineage']):
-                            taxonomy = row['taxonomy_lineage']
-                            domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                        else:
-                            domain = 'Unknown'
-                        
-                        # Create clickable accession link using HTML
-                        uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
-                        accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
-                        
-                        table_data.append({
-                            'CDS': f"CDS {i+1}",
-                            'Accession': accession_link,
-                            'Name': row['name'] if pd.notna(row['name']) else 'Not found',
-                            'Full Name': row['full_name'] if pd.notna(row['full_name']) else 'Not found',
-                            'Domain': domain,
-                            'Organism': row['organism_common'] if pd.notna(row['organism_common']) else 'Not found',
-                            'Length': row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not found',
-                            'Function': function_display
-                        })
-                    else:
-                        uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
-                        accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
-                        table_data.append({
-                            'CDS': f"CDS {i+1}",
-                            'Accession': accession_link,
-                            'Name': "Not found",
-                            'Full Name': "Not found",
-                            'Domain': "Unknown",
-                            'Organism': "Not found",
-                            'Length': "Not found",
-                            'Function': "Not found"
-                        })
+                    # Create clickable accession link using HTML
+                    uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+                    accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
+                    
+                    table_data.append({
+                        'CDS': f"CDS {i+1}",
+                        'Accession': accession_link,
+                        'Name': row['name'] if pd.notna(row['name']) else 'Not found',
+                        'Full Name': row['full_name'] if pd.notna(row['full_name']) else 'Not found',
+                        'Domain': domain,
+                        'Organism': row['organism_common'] if pd.notna(row['organism_common']) else 'Not found',
+                        'Length': row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not found',
+                        'Function': function_display
+                    })
+                else:
+                    uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+                    accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
+                    table_data.append({
+                        'CDS': f"CDS {i+1}",
+                        'Accession': accession_link,
+                        'Name': "Not found",
+                        'Full Name': "Not found",
+                        'Domain': "Unknown",
+                        'Organism': "Not found",
+                        'Length': "Not found",
+                        'Function': "Not found"
+                    })
     
     # Display table using HTML
     if table_data:
