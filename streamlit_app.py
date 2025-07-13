@@ -86,23 +86,27 @@ def load_data():
     # Set up path logic for cloud deployment
     BASE_DIR = Path(__file__).resolve().parent  
     REPO_ROOT = BASE_DIR.parent                 
-    data_path = REPO_ROOT / "data"
+    data_path = BASE_DIR / "data"
     
     # Try multiple possible paths for the CSV file
     csv_paths = [
         "viral_parsed_uniprot_swiss_data.csv",
+        "data/viral_parsed_uniprot_swiss_data.csv",
+        str(data_path / "viral_parsed_uniprot_swiss_data.csv"),
+        "../data/viral_parsed_uniprot_swiss_data.csv",
         "data/unnotate/viral_parsed_uniprot_swiss_data.csv",
         "../data/unnotate/viral_parsed_uniprot_swiss_data.csv",
-        str(data_path / "viral_parsed_uniprot_swiss_data.csv"),
     ]
     
     df = None
     for path in csv_paths:
         if os.path.exists(path):
             df = pd.read_csv(path)
+            st.info(f"✅ Found CSV file at: {path}")
             break
     
     if df is None:
+        st.warning(f"❌ Could not find CSV file. Checked paths: {csv_paths}")
         return None, None, None
     
     # Try to load numpy arrays
@@ -112,7 +116,9 @@ def load_data():
     # Try multiple possible paths for numpy files
     npy_paths = [
         ("viral_accession_arrays.npy", "viral_similarity_array.npy"),
+        ("data/viral_accession_arrays.npy", "data/viral_similarity_array.npy"),
         (str(data_path / "viral_accession_arrays.npy"), str(data_path / "viral_similarity_array.npy")),
+        ("../data/viral_accession_arrays.npy", "../data/viral_similarity_array.npy"),
     ]
     
     for acc_path, sim_path in npy_paths:
@@ -129,6 +135,7 @@ def load_data():
                     arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
                     accession_arrays.append(arr)
                 
+                st.info(f"✅ Found numpy files at: {acc_path} and {sim_path}")
                 break
                 
             except Exception as e:
@@ -136,6 +143,7 @@ def load_data():
                 continue
     
     if accession_arrays is None:
+        st.warning(f"❌ Could not find numpy files. Checked paths: {npy_paths}")
         return None, None, None
     
     return df, accession_arrays, similarity_array
@@ -421,6 +429,37 @@ def main():
     
     st.title("Protein Accession Visualization Dashboard")
     
+    # Debug: Show directory information
+    import os
+    from pathlib import Path
+    
+    current_dir = os.getcwd()
+    BASE_DIR = Path(__file__).resolve().parent
+    REPO_ROOT = BASE_DIR.parent
+    data_path = REPO_ROOT / "data"
+    
+    st.sidebar.header("🔍 Debug Information")
+    st.sidebar.write(f"**Current Directory:** {current_dir}")
+    st.sidebar.write(f"**BASE_DIR:** {BASE_DIR}")
+    st.sidebar.write(f"**REPO_ROOT:** {REPO_ROOT}")
+    st.sidebar.write(f"**Data Path:** {data_path}")
+    
+    # Check if key files exist
+    st.sidebar.write("**File Check:**")
+    files_to_check = [
+        "viral_parsed_uniprot_swiss_data.csv",
+        "data/viral_parsed_uniprot_swiss_data.csv",
+        str(data_path / "viral_parsed_uniprot_swiss_data.csv"),
+        "viral_accession_arrays.npy",
+        "data/viral_accession_arrays.npy",
+        str(data_path / "viral_accession_arrays.npy")
+    ]
+    
+    for file_path in files_to_check:
+        exists = os.path.exists(file_path)
+        status = "✅" if exists else "❌"
+        st.sidebar.write(f"{status} {file_path}")
+    
     # Always show upload interface
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
         st.write("Upload a zip file containing the required data files:")
@@ -442,7 +481,7 @@ def main():
             # Set up path logic for cloud deployment
             BASE_DIR = Path(__file__).resolve().parent   # e.g. /home/appuser/
             REPO_ROOT = BASE_DIR.parent                   # up one level if needed
-            data_path = REPO_ROOT / "data"
+            data_path = BASE_DIR / "data"
             
             # Check multiple possible file locations
             possible_files = [

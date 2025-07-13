@@ -1,5 +1,4 @@
 # Large data files
-*.npy
 *.h5
 *.hdf5
 *.zip
@@ -8,7 +7,6 @@
 parsed_uniprot_swiss_data.csv
 full_*.csv
 large_*.csv
-*.csv
 
 # Python cache
 __pycache__/
