@@ -96,8 +96,6 @@ def load_data():
             break
     
     if df is None:
-        st.error("❌ Could not find parsed_uniprot_swiss_data.csv")
-        st.info("Please upload a zip file containing the required data files.")
         return None, None, None
     
     # Try to load numpy arrays
@@ -126,7 +124,6 @@ def load_data():
                     arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
                     accession_arrays.append(arr)
                 
-                st.success(f"✅ Loaded data from {acc_path} and {sim_path}")
                 break
                 
             except Exception as e:
@@ -134,16 +131,7 @@ def load_data():
                 continue
     
     if accession_arrays is None:
-        st.warning("⚠️ Could not load numpy arrays, using sample data")
-        # Fallback to sample data
-        accession_arrays = [
-            ['P03756', 'Q21LK2', 'Q89EM9', 'Q03544', 'Q03546', 'P76515', 'A4IM80', 'B6JPK6', 'B5Z9N6', 'Q03547'],
-            ['P43661', 'Q887Q8', 'Q8X5K6', 'P59791', 'P33128', 'Q88ND4', 'P70799', 'Q06062', 'P39632', 'P33409']
-        ]
-        similarity_array = np.array([
-            [1.0, 0.8, 0.6, 0.4, 0.2, 0.1, 0.3, 0.5, 0.7, 0.9],
-            [0.8, 1.0, 0.7, 0.5, 0.3, 0.2, 0.4, 0.6, 0.8, 0.7]
-        ])
+        return None, None, None
     
     return df, accession_arrays, similarity_array
 
@@ -428,59 +416,46 @@ def main():
     
     st.title("Protein Accession Visualization Dashboard")
     
-    # Check if data files exist, if not try to download from GitHub
-    required_files = [
-        "full_accession_arrays.npy",
-        "full_similarity_array.npy", 
-        "parsed_uniprot_swiss_data.csv"
-    ]
-    
-    missing_files = [f for f in required_files if not os.path.exists(f)]
-    
-    if missing_files:
-        st.warning(f"⚠️ Missing data files: {', '.join(missing_files)}")
+    # Always show upload interface
+    with st.expander("📥 Upload Data from ZIP File", expanded=True):
+        st.write("Upload a zip file containing the required data files:")
+        st.write("- A CSV file (e.g., `parsed_uniprot_swiss_data.csv`)")
+        st.write("- A numpy file with accession arrays (e.g., `full_accession_arrays.npy`)")
+        st.write("- A numpy file with similarity data (e.g., `full_similarity_array.npy`)")
         
-        # Auto-download for cloud deployment
-        if st.secrets.get("GITHUB_REPO_OWNER") and st.secrets.get("GITHUB_REPO_NAME"):
-            # Use secrets for cloud deployment
-            repo_owner = st.secrets["GITHUB_REPO_OWNER"]
-            repo_name = st.secrets["GITHUB_REPO_NAME"]
-            release_tag = st.secrets.get("GITHUB_RELEASE_TAG", "latest")
-            
-            st.info("🔄 Auto-downloading data from GitHub release...")
-            # This part of the code is no longer relevant as we are replacing GitHub download with zip upload.
-            # The original download_from_github_release function is removed.
-            # The user's edit hint implies that the user intends to remove this block.
-            # For now, we will keep it as is, but it will not function as intended.
-            # If the user wants to remove this block, they should provide a new edit.
-            # For now, we will just remove the call to the non-existent function.
-            pass # Removed the call to download_from_github_release
-        else:
-            # Manual download interface for local development
-            with st.expander("📥 Upload Data from ZIP File", expanded=True):
-                st.write("The app needs data files to run. You can upload a zip file containing the `parsed_uniprot_swiss_data.csv` and `*.npy` files:")
-                
-                uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
-                
-                if uploaded_file is not None:
-                    df, accession_arrays, similarity_array = process_uploaded_zip(uploaded_file)
-                    if df is not None and accession_arrays is not None and similarity_array is not None:
-                        st.rerun()  # Refresh the page
-                    else:
-                        st.error("❌ Failed to load data from uploaded ZIP file.")
+        uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
+        
+        if uploaded_file is not None:
+            with st.spinner("Processing uploaded ZIP file..."):
+                df, accession_arrays, similarity_array = process_uploaded_zip(uploaded_file)
+                if df is not None and accession_arrays is not None and similarity_array is not None:
+                    st.success("✅ Data loaded successfully from uploaded ZIP file!")
                 else:
-                    st.info("Please upload a ZIP file to proceed.")
-                
-                st.info("💡 **Alternative**: You can also manually download the `protein_data_v1.0.zip` file from the GitHub releases page and extract it here.")
-    
-    # Load data
-    with st.spinner("Loading data..."):
-        df, accession_arrays, similarity_array = load_data()
+                    st.error("❌ Failed to load data from uploaded ZIP file. Please check the file contents.")
+        else:
+            # Try to load from local files if no upload
+            required_files = [
+                "data/viral_accession_arrays.npy",
+                "data/viral_similarity_array.npy", 
+                "data/viral_parsed_uniprot_swiss_data.csv"
+            ]
+            
+            missing_files = [f for f in required_files if not os.path.exists(f)]
+            
+            if not missing_files:
+                # All files exist locally, load them
+                with st.spinner("Loading data from local files..."):
+                    df, accession_arrays, similarity_array = load_data()
+                    if df is not None and accession_arrays is not None and similarity_array is not None:
+                        st.success("✅ Data loaded from local files!")
+            else:
+                df = None
+                accession_arrays = None
+                similarity_array = None
     
     # Check if data loaded successfully
     if df is None or accession_arrays is None or similarity_array is None:
-        st.error("❌ Failed to load required data.")
-        st.info("💡 Please upload a zip file containing the required data files.")
+        st.info("💡 Please upload a zip file containing the required data files to get started.")
         return
     
     # Sidebar for controls

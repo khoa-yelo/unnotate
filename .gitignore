@@ -37,3 +37,6 @@ venv/
 # OS files
 .DS_Store
 Thumbs.db 
+
+# tmp directory
+tmp/*
