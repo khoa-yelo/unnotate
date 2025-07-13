@@ -2,6 +2,8 @@
 
 Annotate proteins with unknown functions with uncertantity quantification and Uniprot mapping 
 
+Check out at: https://unnotate.streamlit.app
+
 ## Features
 
 - **Interactive Heatmaps**: Domain-based and similarity heatmaps with hover information
