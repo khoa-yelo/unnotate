@@ -120,26 +120,29 @@ def process_uploaded_zip(uploaded_file):
                 csv_file = None
                 accession_file = None
                 similarity_file = None
+                sequence_similarity_file = None
                 
                 for file_path in file_list:
                     if file_path.endswith('.csv'):
                         csv_file = os.path.join(temp_dir, file_path)
                     elif 'accession' in file_path.lower() and file_path.endswith('.npy'):
                         accession_file = os.path.join(temp_dir, file_path)
-                    elif 'similarity' in file_path.lower() and file_path.endswith('.npy'):
+                    elif 'similarity' in file_path.lower() and 'sequence' not in file_path.lower() and file_path.endswith('.npy'):
                         similarity_file = os.path.join(temp_dir, file_path)
+                    elif 'sequence_similarity' in file_path.lower() and file_path.endswith('.npy'):
+                        sequence_similarity_file = os.path.join(temp_dir, file_path)
                 
                 if not csv_file:
                     st.error("❌ No CSV file found in the zip")
-                    return None, None, None
+                    return None, None, None, None
                 
                 if not accession_file:
                     st.error("❌ No accession arrays file found in the zip")
-                    return None, None, None
+                    return None, None, None, None
                 
                 if not similarity_file:
                     st.error("❌ No similarity array file found in the zip")
-                    return None, None, None
+                    return None, None, None, None
                 
                 # Load the data
                 df = pd.read_csv(csv_file)
@@ -147,6 +150,12 @@ def process_uploaded_zip(uploaded_file):
                 
                 accession_arrays_loaded = np.load(accession_file)
                 similarity_array = np.load(similarity_file)
+                
+                # Load sequence similarity array if available
+                sequence_similarity_array = None
+                if sequence_similarity_file:
+                    sequence_similarity_array = np.load(sequence_similarity_file)
+                    st.success(f"✅ Loaded sequence similarity array with shape {sequence_similarity_array.shape}")
                 
                 # Convert to list format
                 accession_arrays = []
@@ -158,11 +167,11 @@ def process_uploaded_zip(uploaded_file):
                 
                 st.success(f"✅ Loaded {len(accession_arrays)} accession arrays and similarity array")
                 
-                return df, accession_arrays, similarity_array
+                return df, accession_arrays, similarity_array, sequence_similarity_array
                 
     except Exception as e:
         st.error(f"❌ Error processing zip file: {e}")
-        return None, None, None
+        return None, None, None, None
 
 @st.cache_data
 def load_data(dataset_type="Virus"):
@@ -191,25 +200,30 @@ def load_data(dataset_type="Virus"):
             break
     
     if df is None:
-        return None, None, None
+        return None, None, None, None
     
     # Try to load numpy arrays
     accession_arrays = None
     similarity_array = None
+    sequence_similarity_array = None
     
     # Try multiple possible paths for numpy files
     npy_paths = [
-        (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy"),
-        (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy"),
-        (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy")),
-        (f"../data/{prefix}_accession_arrays.npy", f"../data/{prefix}_similarity_array.npy"),
+        (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_sequence_similarity_array.npy"),
+        (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy", f"data/{prefix}_sequence_similarity_array.npy"),
+        (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_sequence_similarity_array.npy")),
+        (f"../data/{prefix}_accession_arrays.npy", f"../data/{prefix}_similarity_array.npy", f"../data/{prefix}_sequence_similarity_array.npy"),
     ]
     
-    for acc_path, sim_path in npy_paths:
+    for acc_path, sim_path, seq_sim_path in npy_paths:
         if os.path.exists(acc_path) and os.path.exists(sim_path):
             try:
                 accession_arrays_loaded = np.load(acc_path)
                 similarity_array = np.load(sim_path)
+                
+                # Load sequence similarity array if available
+                if os.path.exists(seq_sim_path):
+                    sequence_similarity_array = np.load(seq_sim_path)
                 
                 # Convert to list format
                 accession_arrays = []
@@ -225,9 +239,9 @@ def load_data(dataset_type="Virus"):
                 continue
     
     if accession_arrays is None:
-        return None, None, None
+        return None, None, None, None
     
-    return df, accession_arrays, similarity_array
+    return df, accession_arrays, similarity_array, sequence_similarity_array
 
 def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
     """Create heatmap visualization with optional domain-based sorting"""
@@ -347,40 +361,71 @@ def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None,
     )
     return fig
 
-def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None):
+def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
     """Create similarity heatmap with optional domain-based sorting"""
     # Use precomputed data if available, otherwise compute it
-    if domain_cache is None:
-        domain_cache, _, _ = precompute_domain_data(df, accession_arrays)
+    if domain_cache is None or hover_cache is None:
+        domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
     
     # Get sorted arrays using precomputed function
     arrays_to_visualize, similarity_data = precompute_sorted_arrays(
         accession_arrays, similarity_array, domain_cache, selected_domain
     )
     
-    # Create customdata with UniProt URLs
+    # Create hover text and customdata with UniProt URLs
     max_len = max(len(arr) for arr in arrays_to_visualize)
+    hover_texts = []
     customdata = []
     
-    for accessions in arrays_to_visualize:
+    for cds_idx, accessions in enumerate(arrays_to_visualize):
+        row_hover = []
         row_urls = []
-        for acc in accessions:
+        
+        for pos_idx, acc in enumerate(accessions):
+            # Get similarity value
+            similarity_value = similarity_data[cds_idx][pos_idx]
+            
+            # Use precomputed hover data
+            base_hover = hover_cache.get(acc, f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>")
+            
+            # Add CDS, position, and similarity info to hover text
+            hover_text = f"""
+            <b>CDS Index:</b> {cds_idx+1}<br>
+            <b>Position Index:</b> {pos_idx+1}<br>
+            <b>Similarity:</b> {similarity_value:.3f}<br>
+            {base_hover}
+            """
+            
             uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+            
+            row_hover.append(hover_text)
             row_urls.append(uniprot_url)
         
         # Pad with empty strings
+        row_hover.extend([''] * (max_len - len(accessions)))
         row_urls.extend([''] * (max_len - len(accessions)))
+        hover_texts.append(row_hover)
         customdata.append(row_urls)
     
     # Transpose and flip
+    hover_texts_transposed = list(zip(*hover_texts))[::-1]
     customdata_transposed = list(zip(*customdata))[::-1]
     
     z = np.array(similarity_data).T[::-1]
+    
+    # Normalize values if they're in 0-100 range
+    if np.max(z) > 1.1:
+        z = z / 100.0
+    
     fig = go.Figure(data=go.Heatmap(
         z=z,
         colorscale='Blues',
         colorbar=dict(title="Similarity"),
-        customdata=customdata_transposed
+        hovertext=hover_texts_transposed,
+        hoverinfo='text',
+        customdata=customdata_transposed,
+        zmin=0.8,
+        zmax=1
     ))
     
     title = "Cosine Similarity (ESM-C) Heatmap"
@@ -394,6 +439,292 @@ def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_d
         height=400,
         width=1200
     )
+    return fig
+
+def create_similarity_barplot(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None):
+    """Create horizontal bar plot showing row sums for similarity data"""
+    # Use precomputed data if available, otherwise compute it
+    if domain_cache is None:
+        domain_cache, _, _ = precompute_domain_data(df, accession_arrays)
+    
+    # Get sorted arrays using precomputed function
+    arrays_to_visualize, similarity_data = precompute_sorted_arrays(
+        accession_arrays, similarity_array, domain_cache, selected_domain
+    )
+    
+    # Calculate row sums
+    z = np.array(similarity_data).T[::-1]
+    
+    # Normalize values if they're in 0-100 range
+    if np.max(z) > 1.1:
+        z = z / 100.0
+    
+    row_sums = np.sum(z, axis=1)
+    
+    # Create bar plot
+    fig = go.Figure(data=go.Bar(
+        x=row_sums,
+        y=[f"Row {i+1}" for i in range(len(row_sums))],
+        orientation='h',
+        marker_color='lightblue',
+        marker_line_color='navy',
+        marker_line_width=1,
+        text=[f"{val:.2f}" for val in row_sums],
+        textposition='auto',
+        hovertemplate='<b>Row %{y}</b><br><b>Total Similarity:</b> %{x:.3f}<br><b>Average:</b> %{customdata:.3f}<extra></extra>',
+        customdata=[val/len(z[0]) for val in row_sums]
+    ))
+    
+    title = "Row Sums - Cosine Similarity"
+    if selected_domain and selected_domain != "All Domains":
+        title += f" (Sorted by {selected_domain})"
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Total Similarity",
+        yaxis_title="Protein Row",
+        height=400,
+        width=300,
+        showlegend=False
+    )
+    
+    return fig
+
+def create_sequence_similarity_heatmap(df, accession_arrays, sequence_similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
+    """Create Sequence  Identity Heatmap with optional domain-based sorting"""
+    # Use precomputed data if available, otherwise compute it
+    if domain_cache is None or hover_cache is None:
+        domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
+    
+    # Get sorted arrays using precomputed function
+    arrays_to_visualize, sequence_similarity_data = precompute_sorted_arrays(
+        accession_arrays, sequence_similarity_array, domain_cache, selected_domain
+    )
+    
+    # Create hover text and customdata with UniProt URLs
+    max_len = max(len(arr) for arr in arrays_to_visualize)
+    hover_texts = []
+    customdata = []
+    
+    for cds_idx, accessions in enumerate(arrays_to_visualize):
+        row_hover = []
+        row_urls = []
+        
+        for pos_idx, acc in enumerate(accessions):
+            # Get sequence similarity value
+            seq_similarity_value = sequence_similarity_data[cds_idx][pos_idx]
+            
+            # Use precomputed hover data
+            base_hover = hover_cache.get(acc, f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>")
+            
+            # Add CDS, position, and sequence similarity info to hover text
+            hover_text = f"""
+            <b>CDS Index:</b> {cds_idx+1}<br>
+            <b>Position Index:</b> {pos_idx+1}<br>
+            <b>Sequence Identity:</b> {seq_similarity_value:.3f}<br>
+            {base_hover}
+            """
+            
+            uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+            
+            row_hover.append(hover_text)
+            row_urls.append(uniprot_url)
+        
+        # Pad with empty strings
+        row_hover.extend([''] * (max_len - len(accessions)))
+        row_urls.extend([''] * (max_len - len(accessions)))
+        hover_texts.append(row_hover)
+        customdata.append(row_urls)
+    
+    # Transpose and flip
+    hover_texts_transposed = list(zip(*hover_texts))[::-1]
+    customdata_transposed = list(zip(*customdata))[::-1]
+    
+    z = np.array(sequence_similarity_data).T[::-1]
+    
+    # Normalize values if they're in 0-100 range
+    if np.max(z) > 1.1:
+        z = z / 100.0
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=z,
+        colorscale='Reds',
+        colorbar=dict(title="Sequence Similarity"),
+        hovertext=hover_texts_transposed,
+        hoverinfo='text',
+        customdata=customdata_transposed,
+        zmin=0,
+        zmax=1
+    ))
+    
+    title = "Sequence  Identity Heatmap"
+    if selected_domain and selected_domain != "All Domains":
+        title += f" - Sorted by {selected_domain} first, then by similarity"
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="CDS Index",
+        yaxis_title="Protein Index",    
+        height=400,
+        width=1200
+    )
+    return fig
+
+def create_sequence_barplot(df, accession_arrays, sequence_similarity_array, selected_domain=None, domain_cache=None):
+    """Create horizontal bar plot showing row sums for sequence similarity data"""
+    # Use precomputed data if available, otherwise compute it
+    if domain_cache is None:
+        domain_cache, _, _ = precompute_domain_data(df, accession_arrays)
+    
+    # Get sorted arrays using precomputed function
+    arrays_to_visualize, sequence_similarity_data = precompute_sorted_arrays(
+        accession_arrays, sequence_similarity_array, domain_cache, selected_domain
+    )
+    
+    # Calculate row sums
+    z = np.array(sequence_similarity_data).T[::-1]
+    
+    # Normalize values if they're in 0-100 range
+    if np.max(z) > 1.1:
+        z = z / 100.0
+    
+    row_sums = np.sum(z, axis=1)
+    
+    # Create bar plot
+    fig = go.Figure(data=go.Bar(
+        x=row_sums,
+        y=[f"Row {i+1}" for i in range(len(row_sums))],
+        orientation='h',
+        marker_color='lightcoral',
+        marker_line_color='darkred',
+        marker_line_width=1,
+        text=[f"{val:.2f}" for val in row_sums],
+        textposition='auto',
+        hovertemplate='<b>Row %{y}</b><br><b>Total Sequence Identity:</b> %{x:.3f}<br><b>Average:</b> %{customdata:.3f}<extra></extra>',
+        customdata=[val/len(z[0]) for val in row_sums]
+    ))
+    
+    title = "Row Sums - Sequence Identity"
+    if selected_domain and selected_domain != "All Domains":
+        title += f" (Sorted by {selected_domain})"
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Total Sequence Identity",
+        yaxis_title="Protein Row",
+        height=400,
+        width=300,
+        showlegend=False
+    )
+    
+    return fig
+
+def create_similarity_scatter_plot(df, accession_arrays, similarity_array, sequence_similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
+    """Create interactive scatter plot comparing cosine similarity vs sequence identity"""
+    # Use precomputed data if available, otherwise compute it
+    if domain_cache is None or hover_cache is None:
+        domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
+    
+    # Prepare data for scatter plot
+    cosine_similarities = []
+    sequence_identities = []
+    accessions = []
+    hover_texts = []
+    colors = []
+    
+    # Get domain colors for consistent coloring
+    unique_domains = set()
+    for accessions_list in accession_arrays:
+        for acc in accessions_list:
+            domain = domain_cache.get(acc, 'Unknown')
+            unique_domains.add(domain)
+    
+    domain_colors = get_categorical_colormap(unique_domains)
+    
+    for cds_idx, accessions_list in enumerate(accession_arrays):
+        for pos_idx, acc in enumerate(accessions_list):
+            # Get similarity values
+            cosine_sim = similarity_array[cds_idx][pos_idx]
+            seq_id = sequence_similarity_array[cds_idx][pos_idx]
+            
+            # Normalize values if they're in 0-100 range
+            if cosine_sim > 1.1:
+                cosine_sim = cosine_sim / 100.0
+            if seq_id > 1.1:
+                seq_id = seq_id / 100.0
+            
+            # Get domain for coloring
+            domain = domain_cache.get(acc, 'Unknown')
+            color = domain_colors.get(domain, '#808080')  # Default gray
+            
+            # Create hover text
+            base_hover = hover_cache.get(acc, f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>")
+            hover_text = f"""
+            <b>CDS Index:</b> {cds_idx+1}<br>
+            <b>Position Index:</b> {pos_idx+1}<br>
+            <b>Cosine Similarity:</b> {cosine_sim:.3f}<br>
+            <b>Sequence Identity:</b> {seq_id:.3f}<br>
+            <b>Domain:</b> {domain}<br>
+            {base_hover}
+            """
+            
+            cosine_similarities.append(cosine_sim)
+            sequence_identities.append(seq_id)
+            accessions.append(acc)
+            hover_texts.append(hover_text)
+            colors.append(color)
+    
+    # Create scatter plot
+    fig = go.Figure()
+    
+    # Add scatter trace
+    fig.add_trace(go.Scatter(
+        x=cosine_similarities,
+        y=sequence_identities,
+        mode='markers',
+        marker=dict(
+            size=8,
+            color=colors,
+            opacity=0.7,
+            line=dict(width=1, color='white')
+        ),
+        text=hover_texts,
+        hoverinfo='text',
+        customdata=[f"https://www.uniprot.org/uniprot/{acc}" for acc in accessions],
+        hovertemplate='%{text}<extra></extra>'
+    ))
+    
+    # Calculate correlation coefficient
+    correlation = np.corrcoef(cosine_similarities, sequence_identities)[0, 1]
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Cosine Similarity vs Sequence Identity (Correlation: {correlation:.3f})",
+        xaxis_title="Cosine Similarity (ESM-C)",
+        yaxis_title="Sequence Identity",
+        xaxis=dict(range=[0.8, 1.0]),  # Match cosine similarity heatmap zmin/zmax
+        yaxis=dict(range=[0, 1]),       # Match sequence identity heatmap zmin/zmax
+        height=500,
+        width=800,
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+    
+    # Add domain legend
+    for domain in sorted(unique_domains):
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode='markers',
+            marker=dict(size=10, color=domain_colors.get(domain, '#808080')),
+            name=domain,
+            showlegend=True
+        ))
+    
     return fig
 
 def main():
@@ -415,12 +746,13 @@ def main():
         st.write("- A CSV file (e.g., `PREFIX_parsed_uniprot_swiss_data.csv`)")
         st.write("- A numpy file with accession arrays (e.g., `PREFIX_accession_arrays.npy`)")
         st.write("- A numpy file with similarity data (e.g., `PREFIX_similarity_array.npy`)")
+        st.write("- A numpy file with sequence similarity data (e.g., `PREFIX_sequence_similarity_array.npy`) - optional")
         
         uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
         
         if uploaded_file is not None:
             with st.spinner("Processing uploaded ZIP file..."):
-                df, accession_arrays, similarity_array = process_uploaded_zip(uploaded_file)
+                df, accession_arrays, similarity_array, sequence_similarity_array = process_uploaded_zip(uploaded_file)
                 if df is not None and accession_arrays is not None and similarity_array is not None:
                     st.success("✅ Data loaded successfully from uploaded ZIP file!")
                 else:
@@ -449,7 +781,7 @@ def main():
                 if os.path.exists(acc_file) and os.path.exists(sim_file) and os.path.exists(csv_file):
                     # Found a complete set of files
                     with st.spinner(f"Loading {dataset_type.lower()} data from local files..."):
-                        df, accession_arrays, similarity_array = load_data(dataset_type)
+                        df, accession_arrays, similarity_array, sequence_similarity_array = load_data(dataset_type)
                         if df is not None and accession_arrays is not None and similarity_array is not None:
                             st.success(f"✅ {dataset_type} data loaded from local files!")
                             files_found = True
@@ -459,6 +791,7 @@ def main():
                 df = None
                 accession_arrays = None
                 similarity_array = None
+                sequence_similarity_array = None
     
     # Check if data loaded successfully
     if df is None or accession_arrays is None or similarity_array is None:
@@ -527,13 +860,60 @@ def main():
     )
     st.plotly_chart(fig, use_container_width=True)
     
-    st.subheader("Similarity Heatmap")
-    sim_fig = create_similarity_heatmap(
-        df, accession_arrays, similarity_array, 
-        selected_domain if selected_domain != "All Domains" else None,
-        st.session_state.domain_cache
-    )
-    st.plotly_chart(sim_fig, use_container_width=True)
+    # Cosine Similarity Heatmap and Bar Plot
+    st.subheader("Cosine Similarity Heatmap (ESM-C)")
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        sim_fig = create_similarity_heatmap(
+            df, accession_arrays, similarity_array, 
+            selected_domain if selected_domain != "All Domains" else None,
+            st.session_state.domain_cache,
+            st.session_state.hover_cache
+        )
+        st.plotly_chart(sim_fig, use_container_width=True)
+    
+    with col2:
+        sim_bar_fig = create_similarity_barplot(
+            df, accession_arrays, similarity_array,
+            selected_domain if selected_domain != "All Domains" else None,
+            st.session_state.domain_cache
+        )
+        st.plotly_chart(sim_bar_fig, use_container_width=True)
+    
+    # Display Sequence Identity Heatmap and Bar Plot if available
+    if sequence_similarity_array is not None:
+        st.subheader("Sequence Identity Heatmap")
+        col3, col4 = st.columns([4, 1])
+        
+        with col3:
+            seq_sim_fig = create_sequence_similarity_heatmap(
+                df, accession_arrays, sequence_similarity_array, 
+                selected_domain if selected_domain != "All Domains" else None,
+                st.session_state.domain_cache,
+                st.session_state.hover_cache
+            )
+            st.plotly_chart(seq_sim_fig, use_container_width=True)
+        
+        with col4:
+            seq_bar_fig = create_sequence_barplot(
+                df, accession_arrays, sequence_similarity_array,
+                selected_domain if selected_domain != "All Domains" else None,
+                st.session_state.domain_cache
+            )
+            st.plotly_chart(seq_bar_fig, use_container_width=True)
+        
+        # Add scatter plot comparing the two similarity measures
+        st.subheader("Similarity Comparison Scatter Plot")
+        scatter_fig = create_similarity_scatter_plot(
+            df, accession_arrays, similarity_array, sequence_similarity_array,
+            selected_domain if selected_domain != "All Domains" else None,
+            st.session_state.domain_cache,
+            st.session_state.hover_cache
+        )
+        st.plotly_chart(scatter_fig, use_container_width=True)
+    else:
+        st.info("💡 No sequence similarity data available. Upload a zip file containing 'sequence_similarity_array.npy' to see this visualization.")
     
     # Table view
     st.subheader("Protein Information Table")
@@ -558,7 +938,7 @@ def main():
                 acc = accessions[pos]
                 
                 # Use cached data
-                if acc in relevant_df.index:
+                if relevant_df is not None and acc in relevant_df.index:
                     row = relevant_df.loc[acc]
                     function_text = row['function']
                     if pd.notna(function_text):
