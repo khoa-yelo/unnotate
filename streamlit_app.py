@@ -1,5 +1,5 @@
 """
-Streamlit version of the protein accession visualizer
+Streamlit version of the protein accession visualize
 """
 import streamlit as st
 import plotly.graph_objects as go
@@ -8,49 +8,95 @@ import numpy as np
 import os
 import zipfile
 import tempfile
-import io
 from pathlib import Path
 from matplotlib import cm, colors as mcolors
+from collections import Counter
 
-# Helper for categorical color mapping
+# ---------------------- Data Loading & Preprocessing ----------------------
+
 def get_categorical_colormap(categories):
+    """Return a color map for categorical values."""
     base_colors = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.CSS4_COLORS.values())
-    color_map = {}
-    for i, cat in enumerate(categories):
-        color_map[cat] = base_colors[i % len(base_colors)]
-    return color_map
+    return {cat: base_colors[i % len(base_colors)] for i, cat in enumerate(categories)}
+
+def load_csv_and_arrays(dataset_type="Virus"): 
+    """Load CSV and numpy arrays for the selected dataset type."""
+    BASE_DIR = Path(__file__).resolve().parent
+    data_path = BASE_DIR / "data"
+    prefix = "viral" if dataset_type == "Virus" else "bacterial"
+    csv_paths = [
+        f"{prefix}_parsed_uniprot_swiss_data.csv",
+        f"data/{prefix}_parsed_uniprot_swiss_data.csv",
+        str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv"),
+        f"../data/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"../data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
+    ]
+    df = next((pd.read_csv(path) for path in csv_paths if os.path.exists(path)), None)
+    if df is None:
+        return None, None, None, None
+    npy_paths = [
+        (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_sequence_similarity_array.npy"),
+        (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy", f"data/{prefix}_sequence_similarity_array.npy"),
+        (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_sequence_similarity_array.npy")),
+        (f"../data/{prefix}_accession_arrays.npy", f"../data/{prefix}_similarity_array.npy", f"../data/{prefix}_sequence_similarity_array.npy"),
+    ]
+    for acc_path, sim_path, seq_sim_path in npy_paths:
+        if os.path.exists(acc_path) and os.path.exists(sim_path):
+            try:
+                accession_arrays_loaded = np.load(acc_path)
+                similarity_array = np.load(sim_path)
+                sequence_similarity_array = np.load(seq_sim_path) if os.path.exists(seq_sim_path) else None
+                accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
+                return df, accession_arrays, similarity_array, sequence_similarity_array
+            except Exception:
+                continue
+    return None, None, None, None
+
+def process_uploaded_zip(uploaded_file):
+    """Process uploaded zip file and extract data."""
+    try:
+        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+            file_list = zip_ref.namelist()
+            st.info(f"Files found in zip: {file_list}")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                zip_ref.extractall(temp_dir)
+                csv_file, accession_file, similarity_file, sequence_similarity_file = [None]*4
+                for file_path in file_list:
+                    if file_path.endswith('.csv'):
+                        csv_file = os.path.join(temp_dir, file_path)
+                    elif 'accession' in file_path.lower() and file_path.endswith('.npy'):
+                        accession_file = os.path.join(temp_dir, file_path)
+                    elif 'similarity' in file_path.lower() and 'sequence' not in file_path.lower() and file_path.endswith('.npy'):
+                        similarity_file = os.path.join(temp_dir, file_path)
+                    elif 'sequence_similarity' in file_path.lower() and file_path.endswith('.npy'):
+                        sequence_similarity_file = os.path.join(temp_dir, file_path)
+                if not (csv_file and accession_file and similarity_file):
+                    st.error("❌ Missing required files in the zip")
+                    return None, None, None, None
+                df = pd.read_csv(csv_file)
+                accession_arrays_loaded = np.load(accession_file)
+                similarity_array = np.load(similarity_file)
+                sequence_similarity_array = np.load(sequence_similarity_file) if sequence_similarity_file else None
+                accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
+                return df, accession_arrays, similarity_array, sequence_similarity_array
+    except Exception as e:
+        st.error(f"❌ Error processing zip file: {e}")
+        return None, None, None, None
 
 def precompute_domain_data(df, accession_arrays):
-    """Precompute domain information and hover text for all accessions"""
-    # Flatten all accessions
-    all_accessions = []
-    for accessions in accession_arrays:
-        all_accessions.extend(accessions)
-    
-    # Batch lookup using pandas isin() - do this once
+    """Precompute domain and hover text for all accessions."""
+    all_accessions = [acc for accessions in accession_arrays for acc in accessions]
     mask = df['accession'].isin(all_accessions)
     relevant_df = df[mask].set_index('accession')
-    
-    # Precompute domain and hover data for each accession
-    domain_cache = {}
-    hover_cache = {}
-    
+    domain_cache, hover_cache = {}, {}
     for acc in all_accessions:
         if acc in relevant_df.index:
             row = relevant_df.loc[acc]
-            if pd.notna(row['taxonomy_lineage']):
-                taxonomy = row['taxonomy_lineage']
-                domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-            else:
-                domain = 'Unknown'
-            
-            # Precompute hover text
-            function_text = row['function']
-            if pd.notna(function_text):
-                function_display = function_text[:50] + ('...' if len(function_text) > 50 else '')
-            else:
-                function_display = 'No function data'
-            
+            taxonomy = row['taxonomy_lineage'] if pd.notna(row['taxonomy_lineage']) else ''
+            domain = taxonomy.split(';')[0].strip() if ';' in str(taxonomy) else str(taxonomy).strip() or 'Unknown'
+            function_text = row['function'] if pd.notna(row['function']) else ''
+            function_display = function_text[:50] + ('...' if len(function_text) > 50 else '') if function_text else 'No function data'
             hover_text = f"""
             <b>Accession:</b> {acc}<br>
             <b>Name:</b> {row['name']}<br>
@@ -64,187 +110,30 @@ def precompute_domain_data(df, accession_arrays):
         else:
             domain = 'Unknown'
             hover_text = f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>"
-        
         domain_cache[acc] = domain
         hover_cache[acc] = hover_text
-    
     return domain_cache, hover_cache, relevant_df
 
 def precompute_sorted_arrays(accession_arrays, similarity_array, domain_cache, selected_domain):
-    """Precompute sorted arrays for a given domain selection"""
+    """Sort arrays by domain and similarity if a domain is selected."""
     if not selected_domain or selected_domain == "All Domains":
         return accession_arrays, similarity_array
-    
-    sorted_arrays = []
-    sorted_similarities = []
-    
+    sorted_arrays, sorted_similarities = [], []
     for i, accessions in enumerate(accession_arrays):
         similarities = similarity_array[i].tolist() if hasattr(similarity_array[i], 'tolist') else similarity_array[i]
-        
-        # Get protein data for sorting using cached domain data
-        protein_data = []
-        for j, acc in enumerate(accessions):
-            domain = domain_cache.get(acc, 'Unknown')
-            protein_data.append((acc, domain, similarities[j]))
-        
-        # Sort by domain first, then by similarity
+        protein_data = [(acc, domain_cache.get(acc, 'Unknown'), similarities[j]) for j, acc in enumerate(accessions)]
         def sort_key(item):
             acc, domain, sim = item
-            if domain == selected_domain:
-                return (0, -sim)  # Selected domain first, then by similarity (descending)
-            else:
-                return (1, domain, -sim)  # Other domains, sorted by domain name, then similarity
-        
+            return (0, -sim) if domain == selected_domain else (1, domain, -sim)
         sorted_data = sorted(protein_data, key=sort_key)
-        sorted_accessions = [acc for acc, domain, sim in sorted_data]
-        sorted_sims = [sim for acc, domain, sim in sorted_data]
-        
-        sorted_arrays.append(sorted_accessions)
-        sorted_similarities.append(sorted_sims)
-    
+        sorted_arrays.append([acc for acc, _, _ in sorted_data])
+        sorted_similarities.append([sim for _, _, sim in sorted_data])
     return sorted_arrays, np.array(sorted_similarities)
 
-def process_uploaded_zip(uploaded_file):
-    """Process uploaded zip file and extract data"""
-    try:
-        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-            # List all files in the zip
-            file_list = zip_ref.namelist()
-            st.info(f"Files found in zip: {file_list}")
-            
-            # Extract files to temporary directory
-            with tempfile.TemporaryDirectory() as temp_dir:
-                zip_ref.extractall(temp_dir)
-                
-                # Look for the required files
-                csv_file = None
-                accession_file = None
-                similarity_file = None
-                sequence_similarity_file = None
-                
-                for file_path in file_list:
-                    if file_path.endswith('.csv'):
-                        csv_file = os.path.join(temp_dir, file_path)
-                    elif 'accession' in file_path.lower() and file_path.endswith('.npy'):
-                        accession_file = os.path.join(temp_dir, file_path)
-                    elif 'similarity' in file_path.lower() and 'sequence' not in file_path.lower() and file_path.endswith('.npy'):
-                        similarity_file = os.path.join(temp_dir, file_path)
-                    elif 'sequence_similarity' in file_path.lower() and file_path.endswith('.npy'):
-                        sequence_similarity_file = os.path.join(temp_dir, file_path)
-                
-                if not csv_file:
-                    st.error("❌ No CSV file found in the zip")
-                    return None, None, None, None
-                
-                if not accession_file:
-                    st.error("❌ No accession arrays file found in the zip")
-                    return None, None, None, None
-                
-                if not similarity_file:
-                    st.error("❌ No similarity array file found in the zip")
-                    return None, None, None, None
-                
-                # Load the data
-                df = pd.read_csv(csv_file)
-                st.success(f"✅ Loaded CSV with {len(df)} rows")
-                
-                accession_arrays_loaded = np.load(accession_file)
-                similarity_array = np.load(similarity_file)
-                
-                # Load sequence similarity array if available
-                sequence_similarity_array = None
-                if sequence_similarity_file:
-                    sequence_similarity_array = np.load(sequence_similarity_file)
-                    st.success(f"✅ Loaded sequence similarity array with shape {sequence_similarity_array.shape}")
-                
-                # Convert to list format
-                accession_arrays = []
-                for arr in accession_arrays_loaded:
-                    if hasattr(arr, 'tolist'):
-                        arr = arr.tolist()
-                    arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
-                    accession_arrays.append(arr)
-                
-                st.success(f"✅ Loaded {len(accession_arrays)} accession arrays and similarity array")
-                
-                return df, accession_arrays, similarity_array, sequence_similarity_array
-                
-    except Exception as e:
-        st.error(f"❌ Error processing zip file: {e}")
-        return None, None, None, None
-
-@st.cache_data
-def load_data(dataset_type="Virus"):
-    """Load and cache the protein data"""
-    # Set up path logic for cloud deployment
-    BASE_DIR = Path(__file__).resolve().parent  
-    data_path = BASE_DIR / "data"
-    
-    # Determine file prefix based on dataset type
-    prefix = "viral" if dataset_type == "Virus" else "bacterial"
-    
-    # Try multiple possible paths for the CSV file
-    csv_paths = [
-        f"{prefix}_parsed_uniprot_swiss_data.csv",
-        f"data/{prefix}_parsed_uniprot_swiss_data.csv",
-        str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv"),
-        f"../data/{prefix}_parsed_uniprot_swiss_data.csv",
-        f"data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
-        f"../data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
-    ]
-    
-    df = None
-    for path in csv_paths:
-        if os.path.exists(path):
-            df = pd.read_csv(path)
-            break
-    
-    if df is None:
-        return None, None, None, None
-    
-    # Try to load numpy arrays
-    accession_arrays = None
-    similarity_array = None
-    sequence_similarity_array = None
-    
-    # Try multiple possible paths for numpy files
-    npy_paths = [
-        (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_sequence_similarity_array.npy"),
-        (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy", f"data/{prefix}_sequence_similarity_array.npy"),
-        (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_sequence_similarity_array.npy")),
-        (f"../data/{prefix}_accession_arrays.npy", f"../data/{prefix}_similarity_array.npy", f"../data/{prefix}_sequence_similarity_array.npy"),
-    ]
-    
-    for acc_path, sim_path, seq_sim_path in npy_paths:
-        if os.path.exists(acc_path) and os.path.exists(sim_path):
-            try:
-                accession_arrays_loaded = np.load(acc_path)
-                similarity_array = np.load(sim_path)
-                
-                # Load sequence similarity array if available
-                if os.path.exists(seq_sim_path):
-                    sequence_similarity_array = np.load(seq_sim_path)
-                
-                # Convert to list format
-                accession_arrays = []
-                for arr in accession_arrays_loaded:
-                    if hasattr(arr, 'tolist'):
-                        arr = arr.tolist()
-                    arr = [acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in arr]
-                    accession_arrays.append(arr)
-                
-                break
-                
-            except Exception as e:
-                continue
-    
-    if accession_arrays is None:
-        return None, None, None, None
-    
-    return df, accession_arrays, similarity_array, sequence_similarity_array
+# ---------------------- Plotting Functions ----------------------
 
 def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
-    """Create heatmap visualization with optional domain-based sorting"""
+    """Create heatmap visualization with optional domain-based sorting."""
     # Use precomputed data if available, otherwise compute it
     if domain_cache is None or hover_cache is None:
         domain_cache, hover_cache, relevant_df = precompute_domain_data(df, accession_arrays)
@@ -362,7 +251,7 @@ def create_heatmap(df, accession_arrays, similarity_array, selected_domain=None,
     return fig
 
 def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
-    """Create similarity heatmap with optional domain-based sorting"""
+    """Create similarity heatmap with optional domain-based sorting."""
     # Use precomputed data if available, otherwise compute it
     if domain_cache is None or hover_cache is None:
         domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
@@ -442,7 +331,7 @@ def create_similarity_heatmap(df, accession_arrays, similarity_array, selected_d
     return fig
 
 def create_similarity_barplot(df, accession_arrays, similarity_array, selected_domain=None, domain_cache=None):
-    """Create horizontal bar plot showing row sums for similarity data"""
+    """Create horizontal bar plot showing row sums for similarity data."""
     # Use precomputed data if available, otherwise compute it
     if domain_cache is None:
         domain_cache, _, _ = precompute_domain_data(df, accession_arrays)
@@ -491,7 +380,7 @@ def create_similarity_barplot(df, accession_arrays, similarity_array, selected_d
     return fig
 
 def create_sequence_similarity_heatmap(df, accession_arrays, sequence_similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
-    """Create Sequence  Identity Heatmap with optional domain-based sorting"""
+    """Create Sequence  Identity Heatmap with optional domain-based sorting."""
     # Use precomputed data if available, otherwise compute it
     if domain_cache is None or hover_cache is None:
         domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
@@ -571,7 +460,7 @@ def create_sequence_similarity_heatmap(df, accession_arrays, sequence_similarity
     return fig
 
 def create_sequence_barplot(df, accession_arrays, sequence_similarity_array, selected_domain=None, domain_cache=None):
-    """Create horizontal bar plot showing row sums for sequence similarity data"""
+    """Create horizontal bar plot showing row sums for sequence similarity data."""
     # Use precomputed data if available, otherwise compute it
     if domain_cache is None:
         domain_cache, _, _ = precompute_domain_data(df, accession_arrays)
@@ -620,7 +509,7 @@ def create_sequence_barplot(df, accession_arrays, sequence_similarity_array, sel
     return fig
 
 def create_similarity_scatter_plot(df, accession_arrays, similarity_array, sequence_similarity_array, selected_domain=None, domain_cache=None, hover_cache=None):
-    """Create interactive scatter plot comparing cosine similarity vs sequence identity"""
+    """Create interactive scatter plot comparing cosine similarity vs sequence identity."""
     # Use precomputed data if available, otherwise compute it
     if domain_cache is None or hover_cache is None:
         domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
@@ -727,29 +616,109 @@ def create_similarity_scatter_plot(df, accession_arrays, similarity_array, seque
     
     return fig
 
+def plot_go_function_barplot(df, go_column='go_F_descriptions', top_n=30, title=None):
+    """Plot a barplot of GO terms from a specified column, sorted by frequency."""
+    if go_column not in df.columns:
+        st.info(f"No '{go_column}' column found in the data.")
+        return
+    go_series = df[go_column].dropna().astype(str)
+    go_terms = [x.strip() for entry in go_series for x in entry.split(';') if x.strip()]
+    if not go_terms:
+        st.info(f"No GO terms found in '{go_column}' column.")
+        return
+    counts = Counter(go_terms)
+    most_common = counts.most_common(top_n)
+    terms, freqs = zip(*most_common)
+    fig = go.Figure(go.Bar(
+        x=freqs,
+        y=terms,
+        orientation='h',
+        marker_color='teal',
+    ))
+    fig.update_layout(
+        yaxis={'categoryorder':'total ascending'},
+        xaxis_title='Frequency',
+        yaxis_title='GO Molecular Function',
+        height=600,
+        width=900,
+        margin=dict(l=200, r=20, t=40, b=40),
+        title=title or f"Top {top_n} GO Terms by Frequency"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---------------------- Table Rendering ----------------------
+
+def render_protein_info_table(arrays_to_visualize, relevant_df, domain_cache):
+    """Render the protein information table as HTML."""
+    table_data = []
+    max_len = max(len(arr) for arr in arrays_to_visualize)
+    for pos in range(max_len):
+        for i, accessions in enumerate(arrays_to_visualize):
+            if pos < len(accessions):
+                acc = accessions[pos]
+                if relevant_df is not None and acc in relevant_df.index:
+                    row = relevant_df.loc[acc]
+                    function_text = row['function'] if pd.notna(row['function']) else ''
+                    function_display = function_text[:50] + '...' if len(function_text) > 50 else function_text or 'No function data'
+                    domain = domain_cache.get(acc, 'Unknown')
+                    uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+                    accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
+                    table_data.append({
+                        'CDS': f"CDS {i+1}",
+                        'Accession': accession_link,
+                        'Name': row['name'] if pd.notna(row['name']) else 'Not found',
+                        'Full Name': row['full_name'] if pd.notna(row['full_name']) else 'Not found',
+                        'Domain': domain,
+                        'Organism': row['organism_common'] if pd.notna(row['organism_common']) else 'Not found',
+                        'Length': row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not found',
+                        'Function': function_display
+                    })
+                else:
+                    uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+                    accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
+                    table_data.append({
+                        'CDS': f"CDS {i+1}",
+                        'Accession': accession_link,
+                        'Name': "Not found",
+                        'Full Name': "Not found",
+                        'Domain': "Unknown",
+                        'Organism': "Not found",
+                        'Length': "Not found",
+                        'Function': "Not found"
+                    })
+    if not table_data:
+        st.write("No data to display")
+        return
+    headers = ['CDS', 'Accession', 'Name', 'Full Name', 'Domain', 'Organism', 'Length', 'Function']
+    html_table = """
+    <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
+    <thead><tr style="background-color: #f0f0f0;">
+    """
+    html_table += ''.join([f'<th style="border: 1px solid #ddd; padding: 8px; text-align: left;">{header}</th>' for header in headers])
+    html_table += "</tr></thead><tbody>"
+    for row in table_data:
+        html_table += '<tr>' + ''.join([f'<td style="border: 1px solid #ddd; padding: 8px;">{row[header]}</td>' for header in headers]) + '</tr>'
+    html_table += "</tbody></table>"
+    st.markdown(f"""
+    <div style="overflow-x: auto; overflow-y: auto; max-height: 500px; max-width: 100%;">
+        {html_table}
+    </div>
+    """, unsafe_allow_html=True)
+
+# ---------------------- Main App ----------------------
+
 def main():
     st.set_page_config(page_title="Protein Accession Visualizer", layout="wide")
-    
     st.title("Unnotate: Annotation of Proteins with Unknown function + Uncertainty quantification + Uniprot Mapping")
-    
-    # Dataset selection dropdown
     st.sidebar.header("Dataset Selection")
-    dataset_type = st.sidebar.selectbox(
-        "Choose Dataset:",
-        ["Virus", "Bacteria"],
-        help="Select which default  dataset to visualize"
-    )
-    
-    # Always show upload interface
+    dataset_type = st.sidebar.selectbox("Choose Dataset:", ["Virus", "Bacteria"], help="Select which default  dataset to visualize")
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
         st.write("Upload a zip file containing the required data files:")
         st.write("- A CSV file (e.g., `PREFIX_parsed_uniprot_swiss_data.csv`)")
         st.write("- A numpy file with accession arrays (e.g., `PREFIX_accession_arrays.npy`)")
         st.write("- A numpy file with similarity data (e.g., `PREFIX_similarity_array.npy`)")
         st.write("- A numpy file with sequence similarity data (e.g., `PREFIX_sequence_similarity_array.npy`) - optional")
-        
         uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
-        
         if uploaded_file is not None:
             with st.spinner("Processing uploaded ZIP file..."):
                 df, accession_arrays, similarity_array, sequence_similarity_array = process_uploaded_zip(uploaded_file)
@@ -758,71 +727,27 @@ def main():
                 else:
                     st.error("❌ Failed to load data from uploaded ZIP file. Please check the file contents.")
         else:
-            # Try to load from local files if no upload
-            # Set up path logic for cloud deployment
-            BASE_DIR = Path(__file__).resolve().parent
-            data_path = BASE_DIR / "data"
-            
-            # Determine file prefix based on dataset type
-            prefix = "viral" if dataset_type == "Virus" else "bacterial"
-            
-            # Check multiple possible file locations
-            possible_files = [
-                # Current directory
-                (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_parsed_uniprot_swiss_data.csv"),
-                # Data directory
-                (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv")),
-                # Relative paths
-                (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy", f"data/{prefix}_parsed_uniprot_swiss_data.csv")
-            ]
-            
-            files_found = False
-            for acc_file, sim_file, csv_file in possible_files:
-                if os.path.exists(acc_file) and os.path.exists(sim_file) and os.path.exists(csv_file):
-                    # Found a complete set of files
-                    with st.spinner(f"Loading {dataset_type.lower()} data from local files..."):
-                        df, accession_arrays, similarity_array, sequence_similarity_array = load_data(dataset_type)
-                        if df is not None and accession_arrays is not None and similarity_array is not None:
-                            st.success(f"✅ {dataset_type} data loaded from local files!")
-                            files_found = True
-                            break
-            
-            if not files_found:
-                df = None
-                accession_arrays = None
-                similarity_array = None
-                sequence_similarity_array = None
-    
-    # Check if data loaded successfully
-    if df is None or accession_arrays is None or similarity_array is None:
-        st.info("💡 Please upload a zip file containing the required data files to get started.")
-        return
-    
-    # Initialize session state for caching
+            with st.spinner(f"Loading {dataset_type.lower()} data from local files..."):
+                df, accession_arrays, similarity_array, sequence_similarity_array = load_csv_and_arrays(dataset_type)
+                if df is not None and accession_arrays is not None and similarity_array is not None:
+                    st.success(f"✅ {dataset_type} data loaded from local files!")
+                else:
+                    st.info("💡 Please upload a zip file containing the required data files to get started.")
+                    return
+    # Precompute and cache domain/hover data
     if 'domain_cache' not in st.session_state:
         st.session_state.domain_cache = None
         st.session_state.hover_cache = None
         st.session_state.relevant_df = None
         st.session_state.domains = None
-    
-    # Precompute domain data if not cached or if data changed
     data_hash = hash(str(accession_arrays) + str(df.shape))
-    if (st.session_state.domain_cache is None or 
-        'data_hash' not in st.session_state or 
-        st.session_state.data_hash != data_hash):
-        
+    if (st.session_state.domain_cache is None or 'data_hash' not in st.session_state or st.session_state.data_hash != data_hash):
         with st.spinner("Precomputing domain data..."):
             st.session_state.domain_cache, st.session_state.hover_cache, st.session_state.relevant_df = precompute_domain_data(df, accession_arrays)
             st.session_state.data_hash = data_hash
-            
-            # Precompute domains list
-            all_accessions = []
-            for accessions in accession_arrays:
-                all_accessions.extend(accessions)
-            
+            all_accessions = [acc for accessions in accession_arrays for acc in accessions]
             mask = st.session_state.relevant_df.index.isin(all_accessions)
             relevant_subset = st.session_state.relevant_df[mask]
-            
             domains = set()
             for acc in all_accessions:
                 if acc in relevant_subset.index:
@@ -831,27 +756,12 @@ def main():
                         taxonomy = row['taxonomy_lineage']
                         domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
                         domains.add(domain)
-            
             st.session_state.domains = sorted(list(domains))
-    
-    # Sidebar for controls
     st.sidebar.header("Controls")
-    
-    # Domain selection using cached domains
     domains = st.session_state.domains or ["All Domains"]
-    selected_domain = st.sidebar.selectbox(
-        "Select Domain to Highlight:",
-        ["All Domains"] + domains
-    )
-    
-    # Instructions
+    selected_domain = st.sidebar.selectbox("Select Domain to Highlight:", ["All Domains"] + domains)
     st.info("💡 **Tip**: Click on accession numbers in the table below to open the corresponding UniProt page in your browser!")
-    
-    # Main content - heatmaps on separate rows
-    # Add info about synchronized sorting
-    if selected_domain != "All Domains":
-        st.info(f"Both heatmaps are sorted by {selected_domain} first, then by similarity within each domain.")
-    
+    # --- Main Visualizations (call refactored plotting functions here) ---
     st.subheader("Domain Heatmap")
     fig = create_heatmap(
         df, accession_arrays, similarity_array, 
@@ -915,102 +825,12 @@ def main():
     else:
         st.info("💡 No sequence similarity data available. Upload a zip file containing 'sequence_similarity_array.npy' to see this visualization.")
     
-    # Table view
-    st.subheader("Protein Information Table")
-    
-    # Create table data with proper formatting using cached data
-    table_data = []
-    
-    # Get sorted arrays using precomputed function
-    arrays_to_visualize, sorted_similarity_array = precompute_sorted_arrays(
-        accession_arrays, similarity_array, st.session_state.domain_cache, selected_domain
-    )
-    
-    # Use cached relevant_df
-    relevant_df = st.session_state.relevant_df
-    
-    # Create table data: iterate by position first, then by CDS (alternating CDS order)
-    max_len = max(len(arr) for arr in arrays_to_visualize)
-    for pos in range(max_len):
-        for i in range(len(arrays_to_visualize)):  # For each CDS
-            accessions = arrays_to_visualize[i]
-            if pos < len(accessions):  # Only process if this position exists in this CDS
-                acc = accessions[pos]
-                
-                # Use cached data
-                if relevant_df is not None and acc in relevant_df.index:
-                    row = relevant_df.loc[acc]
-                    function_text = row['function']
-                    if pd.notna(function_text):
-                        function_display = function_text[:50] + '...' if len(function_text) > 50 else function_text
-                    else:
-                        function_display = 'No function data'
-                    
-                    # Get domain information from cache
-                    domain = st.session_state.domain_cache.get(acc, 'Unknown')
-                    
-                    # Create clickable accession link using HTML
-                    uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
-                    accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
-                    
-                    table_data.append({
-                        'CDS': f"CDS {i+1}",
-                        'Accession': accession_link,
-                        'Name': row['name'] if pd.notna(row['name']) else 'Not found',
-                        'Full Name': row['full_name'] if pd.notna(row['full_name']) else 'Not found',
-                        'Domain': domain,
-                        'Organism': row['organism_common'] if pd.notna(row['organism_common']) else 'Not found',
-                        'Length': row['sequence_length'] if pd.notna(row['sequence_length']) else 'Not found',
-                        'Function': function_display
-                    })
-                else:
-                    uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
-                    accession_link = f'<a href="{uniprot_url}" target="_blank">{acc}</a>'
-                    table_data.append({
-                        'CDS': f"CDS {i+1}",
-                        'Accession': accession_link,
-                        'Name': "Not found",
-                        'Full Name': "Not found",
-                        'Domain': "Unknown",
-                        'Organism': "Not found",
-                        'Length': "Not found",
-                        'Function': "Not found"
-                    })
-    
-    # Display table using HTML
-    if table_data:
-        # Create HTML table
-        html_table = """
-        <table style="width:100%; border-collapse: collapse; margin: 20px 0;">
-        <thead>
-        <tr style="background-color: #f0f0f0;">
-        """
-        
-        # Add headers
-        headers = ['CDS', 'Accession', 'Name', 'Full Name', 'Domain', 'Organism', 'Length', 'Function']
-        for header in headers:
-            html_table += f'<th style="border: 1px solid #ddd; padding: 8px; text-align: left;">{header}</th>'
-        
-        html_table += "</tr></thead><tbody>"
-        
-        # Add rows
-        for row in table_data:
-            html_table += '<tr>'
-            for header in headers:
-                cell_value = row[header]
-                html_table += f'<td style="border: 1px solid #ddd; padding: 8px;">{cell_value}</td>'
-            html_table += '</tr>'
-        
-        html_table += "</tbody></table>"
-        
-        # Make table scrollable
-        st.markdown(f"""
-        <div style="overflow-x: auto; overflow-y: auto; max-height: 500px; max-width: 100%;">
-            {html_table}
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.write("No data to display")
+    # --- GO Function Frequency Barplot ---
+    st.subheader("Top GO Molecular Function Terms (Frequency)")
+    plot_go_function_barplot(df, go_column='go_F_descriptions', top_n=30)
+    # --- Protein Information Table ---
+    arrays_to_visualize, _ = precompute_sorted_arrays(accession_arrays, similarity_array, st.session_state.domain_cache, selected_domain)
+    render_protein_info_table(arrays_to_visualize, st.session_state.relevant_df, st.session_state.domain_cache)
 
 if __name__ == "__main__":
     main() 
