@@ -38,3 +38,6 @@ Thumbs.db
 
 # tmp directory
 tmp/*
+
+# data directory
+data/*

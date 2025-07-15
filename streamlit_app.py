@@ -26,20 +26,20 @@ def load_csv_and_arrays(dataset_type="Virus"):
     prefix = "viral" if dataset_type == "Virus" else "bacterial"
     csv_paths = [
         f"{prefix}_parsed_uniprot_swiss_data.csv",
-        f"data/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"test_data/{prefix}_parsed_uniprot_swiss_data.csv",
         str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv"),
-        f"../data/{prefix}_parsed_uniprot_swiss_data.csv",
-        f"data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
-        f"../data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"../test_data/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"test_data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
+        f"../test_data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
     ]
     df = next((pd.read_csv(path) for path in csv_paths if os.path.exists(path)), None)
     if df is None:
         return None, None, None, None
     npy_paths = [
         (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_sequence_similarity_array.npy"),
-        (f"data/{prefix}_accession_arrays.npy", f"data/{prefix}_similarity_array.npy", f"data/{prefix}_sequence_similarity_array.npy"),
+        (f"test_data/{prefix}_accession_arrays.npy", f"test_data/{prefix}_similarity_array.npy", f"test_data/{prefix}_sequence_similarity_array.npy"),
         (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_sequence_similarity_array.npy")),
-        (f"../data/{prefix}_accession_arrays.npy", f"../data/{prefix}_similarity_array.npy", f"../data/{prefix}_sequence_similarity_array.npy"),
+        (f"../test_data/{prefix}_accession_arrays.npy", f"../test_data/{prefix}_similarity_array.npy", f"../test_data/{prefix}_sequence_similarity_array.npy"),
     ]
     for acc_path, sim_path, seq_sim_path in npy_paths:
         if os.path.exists(acc_path) and os.path.exists(sim_path):
