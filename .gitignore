@@ -1,7 +1,6 @@
 # Large data files
 *.h5
 *.hdf5
-*.zip
 
 # Large CSV data files (exclude large ones, allow samples)
 parsed_uniprot_swiss_data.csv
