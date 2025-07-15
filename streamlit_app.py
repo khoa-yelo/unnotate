@@ -710,7 +710,7 @@ def main():
     st.set_page_config(page_title="Protein Accession Visualizer", layout="wide")
     st.title("Unnotate: Annotation of Proteins with Unknown function + Uncertainty quantification + Uniprot Mapping")
     st.sidebar.header("Dataset Selection")
-    dataset_type = st.sidebar.selectbox("Choose Default Dataset:", ["Virus", "Bacteria", "Putative Phage/Plasmid"], help="Select which default  dataset to visualize")
+    dataset_type = st.sidebar.selectbox("Choose Default Dataset:", ["Virus", "Bacteria", "Putative Phage Plasmid"], help="Select which default  dataset to visualize")
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
         st.write("Upload a `PREFIX_streamlit.zip` file containing the required data files:")
         uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])

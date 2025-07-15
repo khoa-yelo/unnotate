@@ -9,6 +9,7 @@ Unnotate is a tool to annotate proteins that traditional annotation pipelines mi
 
 #### GPU Option (extremely fast)
 ```sh
+git clone https://github.com/khoa-yelo/unnotate.git
 mamba env create -f envs/unnotate_gpu.yaml
 mamba activate unnotate_gpu
 ```
@@ -51,3 +52,5 @@ After running annotation, you can explore your results interactively using the U
 
 - Go to [https://unnotate.streamlit.app](https://unnotate.streamlit.app)
 - Upload your output zip file as above.
+
+The Streamlit dashboard provides access to three pre-loaded example datasets in addition to any custom data you upload: Virus, Bacteria, and Putative Phage Plasmid datasets.
