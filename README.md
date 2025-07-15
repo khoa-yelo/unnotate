@@ -1,7 +1,7 @@
 # Unnotate
 
 ## Overview
-Unnotate is a tool to investigate hypothetical proteins. It works by creating protein embeddings with the ESM-C model and comparing them against a comprehensive database of embeddings from Uniprot's reviewed proteins. The results can be explored through an interactive Streamlit dashboard for easy visualization and analysis.
+A tool designed to analyze hypothetical proteins. Unnotate generates protein embeddings using ESM-C and identifies their closest matches within a database of embeddings from reviewed Uniprot proteins. The findings can be interactively explored and analyzed through a Streamlit dashboard.
 
 ## Installation
 
