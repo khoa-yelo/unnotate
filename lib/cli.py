@@ -25,7 +25,7 @@ def main():
 
     if args.command == "download_db":
         download_gdrive_folder(dest_path=args.dest)
-    elif args.command == "annot":
+    elif args.command == "unnot":
         unnotate(
             fasta_file=args.fasta_file,
             embeddings_db=args.embeddings_db,

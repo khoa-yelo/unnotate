@@ -6,9 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import esm
-from protein_embedder import embed_proteins
-from faiss_knn import FaissKNN
-from pairwise_alignment_fast import load_fasta_sequences, calculate_sequence_identity
+from .protein_embedder import embed_proteins
+from .faiss_knn import FaissKNN
+from .pairwise_alignment_fast import load_fasta_sequences, calculate_sequence_identity
 import zipfile
 
 def parse_args():
