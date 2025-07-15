@@ -1,0 +1,22 @@
+name: unnotate_gpu
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch
+  - pytorch-cuda=12.1
+  - faiss-gpu
+  - numpy
+  - pandas
+  - matplotlib
+  - seaborn
+  - gdown
+  - biopython
+  - h5py
+  - pip
+  - pip:
+    - parasail
+    - esm==3.1.2
+    - flash-attn
