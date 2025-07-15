@@ -33,6 +33,15 @@ After installation, use the `unnotate` bash script:
   --prefix [mysterious_virus]
 ```
 
+#### Outputs
+- `PREFIX_uniprot.csv`: uniprot information of the accession hits (nearest neighbors from query fasta)
+- `PREFIX_results.npz`: numpy zip file containing 
+    - accession: Uniprot accesssion nearest neighbors of queried proteins (Nxk)
+    - cosine_similarity: ESM-C embeddings cosine similarity between nearest neighbors and queried proteins (Nxk)
+    - sequence_identity: pairwise sequence identity between nearest neighbors and queried proteins (Nxk)
+- `PREFIX_streamlit.zip`: zip file containing `PREFIX_uniprot.csv`, `PREFIX_results.npz` for visualization
+- statistics (coming soon!)
+
 ## Visualize Results with Streamlit
 
 After running annotation, you can explore your results interactively using the Unnotate Streamlit dashboard.
