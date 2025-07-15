@@ -7,7 +7,7 @@ import pandas as pd
 import time
 from typing import Dict, Optional, Union, Tuple
 import numpy as np
-
+from tqdm import tqdm
 def read_fasta_file(fasta_path: str) -> Tuple[list, list]:
     """
     Read protein sequences and IDs from a FASTA file using Biopython.
@@ -92,7 +92,7 @@ class ProteinEmbedder:
         embeddings = {}
         start_time = time.time()
         
-        for i, (protein_seq, protein_id) in enumerate(zip(protein_sequences, protein_ids)):
+        for i, (protein_seq, protein_id) in tqdm(enumerate(zip(protein_sequences, protein_ids)), total=len(protein_sequences), desc="Embedding proteins"):
             # Check if the protein sequence is empty or NaN
             if not protein_seq or pd.isna(protein_seq):
                 embeddings[protein_id] = self.default_result.copy()
@@ -179,5 +179,7 @@ def embed_proteins(protein_sequences: Union[list, str], model_name: str = "esmc_
     for i, protein_id in enumerate(protein_ids):
         for metric in result.keys():
             result[metric][i] = embeddings_dict[protein_id][metric]
-    
+    # sanity check that vectors are not all zeros
+    if np.all(result['max'] == 0):
+        raise ValueError("All embeddings are zero. Please check your input sequences.")
     return result 

@@ -22,7 +22,7 @@ import sys
 from Bio import SeqIO
 from typing import List, Tuple, Dict
 import logging
-
+from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -98,8 +98,7 @@ def perform_pairwise_alignments(fasta_sequences: List[Tuple[str, str]],
     N, k = accession_array.shape
     similarity_matrix = np.zeros((N, k))
     logger.info(f"Starting fast pairwise alignments for {N} sequences against {k} accessions each")
-    for i, (seq_id, fasta_seq) in enumerate(fasta_sequences):
-        logger.info(f"Processing sequence {i+1}/{N}: {seq_id}")
+    for i, (seq_id, fasta_seq) in tqdm(enumerate(fasta_sequences), total=N, desc="Processing sequences"):
         for j in range(k):
             accession = str(accession_array[i, j]).strip()
             if accession in uniprot_data:

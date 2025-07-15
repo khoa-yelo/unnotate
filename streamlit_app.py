@@ -22,33 +22,35 @@ def get_categorical_colormap(categories):
 def load_csv_and_arrays(dataset_type="Virus"): 
     """Load CSV and numpy arrays for the selected dataset type."""
     BASE_DIR = Path(__file__).resolve().parent
-    data_path = BASE_DIR / "data"
-    prefix = "viral" if dataset_type == "Virus" else "bacterial"
-    csv_paths = [
-        f"{prefix}_parsed_uniprot_swiss_data.csv",
-        f"test_data/{prefix}_parsed_uniprot_swiss_data.csv",
-        str(data_path / f"{prefix}_parsed_uniprot_swiss_data.csv"),
-        f"../test_data/{prefix}_parsed_uniprot_swiss_data.csv",
-        f"test_data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
-        f"../test_data/unnotate/{prefix}_parsed_uniprot_swiss_data.csv",
+    data_path = BASE_DIR / "test_data"
+    prefix = "viral" if dataset_type == "Virus" else "bacterial" if dataset_type == "Bacteria" else "putative_phage_plasmid"
+    
+    # First try to load from ZIP files
+    zip_paths = [
+        str(data_path / f"{prefix}_streamlit.zip"),
     ]
-    df = next((pd.read_csv(path) for path in csv_paths if os.path.exists(path)), None)
-    if df is None:
-        return None, None, None, None
-    npy_paths = [
-        (f"{prefix}_accession_arrays.npy", f"{prefix}_similarity_array.npy", f"{prefix}_sequence_similarity_array.npy"),
-        (f"test_data/{prefix}_accession_arrays.npy", f"test_data/{prefix}_similarity_array.npy", f"test_data/{prefix}_sequence_similarity_array.npy"),
-        (str(data_path / f"{prefix}_accession_arrays.npy"), str(data_path / f"{prefix}_similarity_array.npy"), str(data_path / f"{prefix}_sequence_similarity_array.npy")),
-        (f"../test_data/{prefix}_accession_arrays.npy", f"../test_data/{prefix}_similarity_array.npy", f"../test_data/{prefix}_sequence_similarity_array.npy"),
-    ]
-    for acc_path, sim_path, seq_sim_path in npy_paths:
-        if os.path.exists(acc_path) and os.path.exists(sim_path):
+    
+    for zip_path in zip_paths:
+        if os.path.exists(zip_path):
             try:
-                accession_arrays_loaded = np.load(acc_path)
-                similarity_array = np.load(sim_path)
-                sequence_similarity_array = np.load(seq_sim_path) if os.path.exists(seq_sim_path) else None
-                accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
-                return df, accession_arrays, similarity_array, sequence_similarity_array
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    file_list = zip_ref.namelist()
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        zip_ref.extractall(temp_dir)
+                        csv_file, npz_file = None, None
+                        for file_path in file_list:
+                            if file_path.endswith('.csv'):
+                                csv_file = os.path.join(temp_dir, file_path)
+                            elif file_path.endswith('.npz'):
+                                npz_file = os.path.join(temp_dir, file_path)
+                        if csv_file and npz_file:
+                            df = pd.read_csv(csv_file)
+                            npz = np.load(npz_file, allow_pickle=True)
+                            accession_arrays_loaded = npz["accession"]
+                            similarity_array = npz["cosine_similarity"]
+                            sequence_similarity_array = npz["sequence_identity"] if "sequence_identity" in npz else None
+                            accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
+                            return df, accession_arrays, similarity_array, sequence_similarity_array
             except Exception:
                 continue
     return None, None, None, None
@@ -61,23 +63,20 @@ def process_uploaded_zip(uploaded_file):
             st.info(f"Files found in zip: {file_list}")
             with tempfile.TemporaryDirectory() as temp_dir:
                 zip_ref.extractall(temp_dir)
-                csv_file, accession_file, similarity_file, sequence_similarity_file = [None]*4
+                csv_file, npz_file = None, None
                 for file_path in file_list:
                     if file_path.endswith('.csv'):
                         csv_file = os.path.join(temp_dir, file_path)
-                    elif 'accession' in file_path.lower() and file_path.endswith('.npy'):
-                        accession_file = os.path.join(temp_dir, file_path)
-                    elif 'similarity' in file_path.lower() and 'sequence' not in file_path.lower() and file_path.endswith('.npy'):
-                        similarity_file = os.path.join(temp_dir, file_path)
-                    elif 'sequence_similarity' in file_path.lower() and file_path.endswith('.npy'):
-                        sequence_similarity_file = os.path.join(temp_dir, file_path)
-                if not (csv_file and accession_file and similarity_file):
-                    st.error("❌ Missing required files in the zip")
+                    elif file_path.endswith('.npz'):
+                        npz_file = os.path.join(temp_dir, file_path)
+                if not (csv_file and npz_file):
+                    st.error("❌ Missing required files (.csv and .npz) in the zip")
                     return None, None, None, None
                 df = pd.read_csv(csv_file)
-                accession_arrays_loaded = np.load(accession_file)
-                similarity_array = np.load(similarity_file)
-                sequence_similarity_array = np.load(sequence_similarity_file) if sequence_similarity_file else None
+                npz = np.load(npz_file, allow_pickle=True)
+                accession_arrays_loaded = npz["accession"]
+                similarity_array = npz["cosine_similarity"]
+                sequence_similarity_array = npz["sequence_identity"] if "sequence_identity" in npz else None
                 accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
                 return df, accession_arrays, similarity_array, sequence_similarity_array
     except Exception as e:
@@ -711,13 +710,9 @@ def main():
     st.set_page_config(page_title="Protein Accession Visualizer", layout="wide")
     st.title("Unnotate: Annotation of Proteins with Unknown function + Uncertainty quantification + Uniprot Mapping")
     st.sidebar.header("Dataset Selection")
-    dataset_type = st.sidebar.selectbox("Choose Dataset:", ["Virus", "Bacteria"], help="Select which default  dataset to visualize")
+    dataset_type = st.sidebar.selectbox("Choose Default Dataset:", ["Virus", "Bacteria", "Putative Phage/Plasmid"], help="Select which default  dataset to visualize")
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
-        st.write("Upload a zip file containing the required data files:")
-        st.write("- A CSV file (e.g., `PREFIX_parsed_uniprot_swiss_data.csv`)")
-        st.write("- A numpy file with accession arrays (e.g., `PREFIX_accession_arrays.npy`)")
-        st.write("- A numpy file with similarity data (e.g., `PREFIX_similarity_array.npy`)")
-        st.write("- A numpy file with sequence similarity data (e.g., `PREFIX_sequence_similarity_array.npy`) - optional")
+        st.write("Upload a `PREFIX_streamlit.zip` file containing the required data files:")
         uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
         if uploaded_file is not None:
             with st.spinner("Processing uploaded ZIP file..."):
@@ -730,7 +725,7 @@ def main():
             with st.spinner(f"Loading {dataset_type.lower()} data from local files..."):
                 df, accession_arrays, similarity_array, sequence_similarity_array = load_csv_and_arrays(dataset_type)
                 if df is not None and accession_arrays is not None and similarity_array is not None:
-                    st.success(f"✅ {dataset_type} data loaded from local files!")
+                    st.success(f"✅ Using default {dataset_type} dataset")
                 else:
                     st.info("💡 Please upload a zip file containing the required data files to get started.")
                     return

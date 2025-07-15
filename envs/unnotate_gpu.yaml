@@ -12,9 +12,11 @@ dependencies:
   - pandas
   - matplotlib
   - seaborn
+  - plotly
   - gdown
   - biopython
   - h5py
+  - streamlit
   - pip
   - pip:
     - parasail
