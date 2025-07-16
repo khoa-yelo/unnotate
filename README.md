@@ -45,12 +45,15 @@ After installation, use the `unnotate` bash script:
 ```
 
 #### Outputs
-- `PREFIX_uniprot.csv`: uniprot information of the accession hits (nearest neighbors from query fasta)
-- `PREFIX_results.npz`: numpy zip file containing 
-    - accession: Uniprot accesssion nearest neighbors of queried proteins (Nxk)
-    - cosine_similarity: ESM-C embeddings cosine similarity between nearest neighbors and queried proteins (Nxk)
-    - sequence_identity: pairwise sequence identity between nearest neighbors and queried proteins (Nxk)
-- `PREFIX_streamlit.zip`: zip file containing `PREFIX_uniprot.csv`, `PREFIX_results.npz` for visualization
+- `PREFIX_uniprot.csv`: UniProt information of the accession hits (nearest neighbors from query fasta)
+- `PREFIX_accession.csv`: Accession matrix of nearest neighbors for each query protein (N×k matrix)
+- `PREFIX_cosine_similarity.csv`: Cosine similarity matrix between query proteins and their nearest neighbors (N×k matrix)
+- `PREFIX_sequence_identity.csv`: Sequence identity matrix between query proteins and their nearest neighbors (N×k matrix)
+- `PREFIX_results.npz`: NumPy zip file containing 
+    - accession: UniProt accession nearest neighbors of queried proteins (N×k)
+    - cosine_similarity: ESM-C embeddings cosine similarity between nearest neighbors and queried proteins (N×k)
+    - sequence_identity: pairwise sequence identity between nearest neighbors and queried proteins (N×k)
+- `PREFIX_streamlit.zip`: Zip file containing `PREFIX_uniprot.csv` and `PREFIX_results.npz` for Streamlit visualization (does not include individual CSV files)
 - statistics (coming soon!)
 
 ## Visualize Results with Streamlit

@@ -75,18 +75,39 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     # Save individual files
     csv_path = join(output_dir, f"{prefix}_uniprot.csv")
     npz_path = join(output_dir, f"{prefix}_results.npz")
+    
+    # Create CSV files for sequence identity and cosine similarity
+    similarity_csv_path = join(output_dir, f"{prefix}_cosine_similarity.csv")
+    identity_csv_path = join(output_dir, f"{prefix}_sequence_identity.csv")
+    accession_csv_path = join(output_dir, f"{prefix}_accession.csv")
 
     df.to_csv(csv_path, index=False)
     np.savez(npz_path, accession=accessions, cosine_similarity=similarity, sequence_identity=percent_identity_matrix)
+    
+    # Save cosine similarity as CSV
+    similarity_df = pd.DataFrame(similarity, columns=[f"neighbor_{i+1}" for i in range(similarity.shape[1])])
+    similarity_df.to_csv(similarity_csv_path, index=False)
+    
+    # Save sequence identity as CSV
+    identity_df = pd.DataFrame(percent_identity_matrix, columns=[f"neighbor_{i+1}" for i in range(percent_identity_matrix.shape[1])])
+    identity_df.to_csv(identity_csv_path, index=False)
+    
+    # Save accession as CSV (ensure type is string)
+    accession_df = pd.DataFrame(accessions.astype(str), columns=[f"neighbor_{i+1}" for i in range(accessions.shape[1])])
+    accession_df.to_csv(accession_csv_path, index=False)
 
-    # Create zip file containing all outputs
+    # Create zip file containing only uniprot.csv and results.npz (not the individual CSV files)
     zip_path = join(output_dir, f"{prefix}_streamlit.zip")
     with zipfile.ZipFile(zip_path, 'w') as zipf:
         zipf.write(csv_path, arcname=f"{prefix}_uniprot.csv")
         zipf.write(npz_path, arcname=f"{prefix}_results.npz")
 
+    logger.info(f"Saved UniProt data in {csv_path}")
+    logger.info(f"Saved cosine similarity matrix in {similarity_csv_path}")
+    logger.info(f"Saved sequence identity matrix in {identity_csv_path}")
+    logger.info(f"Saved accession matrix in {accession_csv_path}")
     logger.info(f"Saved all results in {npz_path}")
-    logger.info(f"Created zip archive of all results at {zip_path}")
+    logger.info(f"Created zip archive of Streamlit-compatible files at {zip_path}")
 
 def calculate_sequence_identities(query_seqs, k, accessions_2d, acc_to_seq):
     """Calculate sequence identity between queries and their matches."""
