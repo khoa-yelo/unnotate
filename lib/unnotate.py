@@ -53,7 +53,7 @@ def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, 
     
     if os.path.exists(index_path):
         logger.info(f"Loading existing FAISS index from {index_path}")
-        knn = FaissKNN.load(index_path, metric=faiss_metric, use_gpu=True)
+        knn = FaissKNN.load(index_path, metric=faiss_metric, use_gpu=device)
     else:
         logger.info("Creating new FAISS index")
         knn = FaissKNN(dim=reference_embeddings.shape[1], metric=faiss_metric, use_gpu=device)
