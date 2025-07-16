@@ -18,6 +18,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+use_gpu = device.type == "cuda"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Unnotate protein sequences")
@@ -53,10 +54,10 @@ def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, 
     
     if os.path.exists(index_path):
         logger.info(f"Loading existing FAISS index from {index_path}")
-        knn = FaissKNN.load(index_path, metric=faiss_metric, use_gpu=device)
+        knn = FaissKNN.load(index_path, metric=faiss_metric, use_gpu=use_gpu)
     else:
         logger.info("Creating new FAISS index")
-        knn = FaissKNN(dim=reference_embeddings.shape[1], metric=faiss_metric, use_gpu=device)
+        knn = FaissKNN(dim=reference_embeddings.shape[1], metric=faiss_metric, use_gpu=use_gpu)
         knn.add(reference_embeddings)
     
     similarity, indices = knn.search(query_embeddings, k=k)
