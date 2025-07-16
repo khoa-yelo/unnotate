@@ -98,34 +98,27 @@ class ProteinEmbedder:
                 embeddings[protein_id] = self.default_result.copy()
                 continue
             
-            try:
-                protein = self.ESMProtein(sequence=protein_seq)
-                protein_tensor = self.client.encode(protein)
-                logits_output = self.client.logits(
-                    protein_tensor,
-                    self.LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=True)
-                )
-                
-                embeddings_tensor = logits_output.embeddings.squeeze()
-                logits = logits_output.hidden_states[middle_layer].squeeze()
-
-                max_ = torch.max(embeddings_tensor, dim=0).values.detach().cpu().numpy()
-                mean = embeddings_tensor.mean(dim=0).detach().cpu().numpy()
-                max_middle = torch.max(logits, dim=0).values.float().detach().cpu().numpy()
-                mean_middle = logits.mean(dim=0).float().detach().cpu().numpy()
-                
-                embeddings[protein_id] = {
-                    "max": max_,
-                    "mean": mean,
-                    f"max_middle_layer_{middle_layer}": max_middle,
-                    f"mean_middle_layer_{middle_layer}": mean_middle
-                }
-                
-            except Exception:
-                embeddings[protein_id] = self.default_result.copy()
+            protein = self.ESMProtein(sequence=protein_seq)
+            protein_tensor = self.client.encode(protein)
+            logits_output = self.client.logits(
+                protein_tensor,
+                self.LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=True)
+            )
+            
+            embeddings_tensor = logits_output.embeddings.squeeze()
+            logits = logits_output.hidden_states[middle_layer].squeeze()
+            max_ = torch.max(embeddings_tensor, dim=0).values.float().detach().cpu().numpy()
+            mean = embeddings_tensor.mean(dim=0).float().detach().cpu().numpy()
+            max_middle = torch.max(logits, dim=0).values.float().detach().cpu().numpy()
+            mean_middle = logits.mean(dim=0).float().detach().cpu().numpy()
+            embeddings[protein_id] = {
+                "max": max_,
+                "mean": mean,
+                f"max_middle_layer_{middle_layer}": max_middle,
+                f"mean_middle_layer_{middle_layer}": mean_middle
+            }
         
         return embeddings
-
 
 # Convenience function for quick embedding
 def embed_proteins(protein_sequences: Union[list, str], model_name: str = "esmc_600m", 
