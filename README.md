@@ -4,15 +4,25 @@
 A tool designed to analyze hypothetical proteins. Unnotate generates protein embeddings using ESM-C and identifies their closest matches within a database of embeddings from reviewed Uniprot proteins. The findings can be interactively explored and analyzed through a Streamlit dashboard.
 
 ## Installation
+```sh
+git clone https://github.com/khoa-yelo/unnotate.git
+```
 
 ### Using Conda/Mamba
 
-#### GPU Option (extremely fast)
+
+#### GPU Option (Recommended if available - extremely fast)
 ```sh
-git clone https://github.com/khoa-yelo/unnotate.git
 mamba env create -f envs/unnotate_gpu.yaml
 mamba activate unnotate_gpu
 ```
+
+#### CPU Option
+```sh
+mamba env create -f envs/unnotate_cpu.yaml
+mamba activate unnotate_cpu
+```
+
 ## Usage
 
 ### CLI
@@ -26,11 +36,12 @@ After installation, use the `unnotate` bash script:
 #### Annotate protein sequences
 ```sh
 ./unnotate unnot \
-  --fasta-file [your.faa] \  # protein sequences
-  --database-dir [path/to/database_folder] \  # folder containing .h5 and .csv
-  --output-dir ./results \
+  --fasta-file [your.faa] \ # protein sequences
+  --database-dir [path/to/database/dir] \  # dir obtained from download_db
+  --output-dir [path/to/output/dir] \
   --k 20 # number of nearest neighbors
   --prefix [mysterious_virus]
+  --cpu # specify if using cpu env, remove if using gpu 
 ```
 
 #### Outputs
