@@ -4,6 +4,8 @@ import os
 import glob
 from .download_database import download_gdrive_folder
 from .unnotate import unnotate
+import logging
+import torch
 
 def main():
     parser = argparse.ArgumentParser(prog="unnotate")
@@ -21,8 +23,24 @@ def main():
     parser_annot.add_argument("--metric", default="mean_middle_layer_12")
     parser_annot.add_argument("--output-dir", required=True)
     parser_annot.add_argument("--prefix", default="unnotated")
+    parser_annot.add_argument("--faiss-metric", default="cosine")
+    parser_annot.add_argument("--cpu", action="store_true")
 
     args = parser.parse_args()
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting Unnotate with args: {args}")
+    # Determine use_gpu based on --cpu flag and CUDA availability
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"Using CPU: {args.cpu}")
+    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    logger.info(f"Using CPU: {args.cpu}")
+    if args.cpu:
+        use_gpu = False
+    else:
+        use_gpu = torch.cuda.is_available()
+        if not use_gpu:
+            logger.warning("GPU is not available, using CPU instead")
 
     if args.command == "download_db":
         download_gdrive_folder(dest_path=args.dest)
@@ -42,7 +60,9 @@ def main():
             k=args.k,
             metric=args.metric,
             output_dir=args.output_dir,
-            prefix=args.prefix
+            prefix=args.prefix,
+            faiss_metric=args.faiss_metric,
+            use_gpu=use_gpu
         )
     else:
         parser.print_help()

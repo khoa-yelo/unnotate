@@ -18,7 +18,6 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-use_gpu = device.type == "cuda"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Unnotate protein sequences")
@@ -29,6 +28,7 @@ def parse_args():
     parser.add_argument("--metric", type=str, default="mean_middle_layer_12", help="Metric to use for the embeddings")
     parser.add_argument("--prefix", type=str, default="unnotated", help="Prefix for output files")
     parser.add_argument("--faiss-metric", type=str, default="cosine", choices=["cosine", "euclidean"], help="FAISS metric to use (cosine or euclidean)")
+    parser.add_argument("--cpu", action="store_true", help="Force use of CPU for FAISS (default: use GPU if available)")
     return parser.parse_args()
 
 def load_embeddings(embeddings_db, metric):
@@ -47,7 +47,7 @@ def load_embeddings(embeddings_db, metric):
         
     return embeddings[metric], data_ids
 
-def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, database_dir, metric, faiss_metric="cosine"):
+def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, database_dir, metric, faiss_metric="cosine", use_gpu=False):
     """Find k nearest neighbors using Faiss."""
     # Check if FAISS index already exists
     index_path = os.path.join(database_dir, f"{metric}_{faiss_metric}.faiss.index")
@@ -101,7 +101,7 @@ def calculate_sequence_identities(query_seqs, k, accessions_2d, acc_to_seq):
             
     return percent_identity_matrix
 
-def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", output_dir=None, prefix="unnotated", faiss_metric="cosine"):
+def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", output_dir=None, prefix="unnotated", faiss_metric="cosine", use_gpu=False):
     """
     Annotate protein sequences using a database directory containing embeddings and UniProt CSV.
     Args:
@@ -112,6 +112,7 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
         output_dir: Output directory
         prefix: Output file prefix
         faiss_metric: FAISS metric to use ("cosine" or "euclidean")
+        use_gpu: Whether to use GPU for FAISS
     """
     # Find files in database_dir
     h5_files = glob.glob(os.path.join(database_dir, "*.h5"))
@@ -127,12 +128,13 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
     reference_embeddings, data_ids = load_embeddings(embeddings_db, metric)
     
     # Generate query embeddings
-    protein_embeddings = embed_proteins(protein_sequences=[], fasta_file=fasta_file)
+    device = "cuda" if use_gpu else "cpu"
+    protein_embeddings = embed_proteins(protein_sequences=[], fasta_file=fasta_file, device=device)
     query_embeddings = protein_embeddings[metric]
     
     # Find nearest neighbors
     similarity, indices, accessions = find_nearest_neighbors(
-        query_embeddings, reference_embeddings, k, data_ids, database_dir, metric, faiss_metric=faiss_metric
+        query_embeddings, reference_embeddings, k, data_ids, database_dir, metric, faiss_metric=faiss_metric, use_gpu=use_gpu
     )
     
     # Load and filter UniProt data
@@ -165,6 +167,17 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
 if __name__ == "__main__":
     args = parse_args()
     logger.info(f"Starting Unnotate with args: {args}")
+    # Determine use_gpu based on --cpu flag and CUDA availability
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"Using CPU: {args.cpu}")
+    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    logger.info(f"Using CPU: {args.cpu}")
+    if args.cpu:
+        use_gpu = False
+    else:
+        use_gpu = torch.cuda.is_available()
+        if not use_gpu:
+            logger.warning("GPU is not available, using CPU instead")
     unnotate(
         args.fasta_file,
         args.database_dir,
@@ -172,5 +185,6 @@ if __name__ == "__main__":
         args.metric,
         args.output_dir,
         args.prefix,
-        faiss_metric=args.faiss_metric
+        faiss_metric=args.faiss_metric,
+        use_gpu=use_gpu
     )
