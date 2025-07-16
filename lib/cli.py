@@ -36,8 +36,6 @@ def main():
         if not csv_files:
             print(f"No .csv UniProt file found in {args.database_dir}", file=sys.stderr)
             sys.exit(1)
-        embeddings_db = h5_files[0]
-        uniprot_db = csv_files[0]
         unnotate(
             fasta_file=args.fasta_file,
             database_dir=args.database_dir,

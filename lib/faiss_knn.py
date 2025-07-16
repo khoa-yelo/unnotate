@@ -1,8 +1,9 @@
 import numpy as np
 import faiss
+import torch
 
 class FaissKNN:
-    def __init__(self, dim, metric='cosine', use_gpu=True, gpu_device=0):
+    def __init__(self, dim, metric= 'cosine', use_gpu=True, gpu_device=0):
         """
         Initialize the FAISS KNN index.
         Args:
@@ -98,16 +99,17 @@ if __name__ == "__main__":
     database = np.random.randn(N, D).astype('float32')
     query = database[0].reshape(1, -1)
     k = 10
+    use_gpu = torch.cuda.is_available()
 
     print("--- Cosine Similarity (GPU) ---")
-    knn_cosine = FaissKNN(dim=D, metric='cosine', use_gpu=True)
+    knn_cosine = FaissKNN(dim=D, metric='cosine', use_gpu=use_gpu)
     knn_cosine.add(database)
     distances, indices = knn_cosine.search(query, k)
     print("Indices:", indices)
     print("Cosine similarities:", distances)
 
     print("\n--- Euclidean Distance (GPU) ---")
-    knn_euclidean = FaissKNN(dim=D, metric='euclidean', use_gpu=True)
+    knn_euclidean = FaissKNN(dim=D, metric='euclidean', use_gpu=use_gpu)
     knn_euclidean.add(database)
     distances, indices = knn_euclidean.search(query, k)
     print("Indices:", indices)

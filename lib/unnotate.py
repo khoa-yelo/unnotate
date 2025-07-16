@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import esm
+import torch
 from .protein_embedder import embed_proteins
 from .faiss_knn import FaissKNN
 from .pairwise_alignment_fast import load_fasta_sequences, calculate_sequence_identity
@@ -16,6 +17,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Unnotate protein sequences")
@@ -25,6 +27,7 @@ def parse_args():
     parser.add_argument("--output-dir", type=str, required=True, help="Path to the output directory")
     parser.add_argument("--metric", type=str, default="mean_middle_layer_12", help="Metric to use for the embeddings")
     parser.add_argument("--prefix", type=str, default="unnotated", help="Prefix for output files")
+    parser.add_argument("--faiss-metric", type=str, default="cosine", choices=["cosine", "euclidean"], help="FAISS metric to use (cosine or euclidean)")
     return parser.parse_args()
 
 def load_embeddings(embeddings_db, metric):
@@ -43,10 +46,19 @@ def load_embeddings(embeddings_db, metric):
         
     return embeddings[metric], data_ids
 
-def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids):
+def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, database_dir, metric, faiss_metric="cosine"):
     """Find k nearest neighbors using Faiss."""
-    knn = FaissKNN(dim=reference_embeddings.shape[1], metric="cosine", use_gpu=True)
-    knn.add(reference_embeddings)
+    # Check if FAISS index already exists
+    index_path = os.path.join(database_dir, f"{metric}_{faiss_metric}.faiss.index")
+    
+    if os.path.exists(index_path):
+        logger.info(f"Loading existing FAISS index from {index_path}")
+        knn = FaissKNN.load(index_path, metric=faiss_metric, use_gpu=True)
+    else:
+        logger.info("Creating new FAISS index")
+        knn = FaissKNN(dim=reference_embeddings.shape[1], metric=faiss_metric, use_gpu=device)
+        knn.add(reference_embeddings)
+    
     similarity, indices = knn.search(query_embeddings, k=k)
     
     similarity = similarity
@@ -88,7 +100,7 @@ def calculate_sequence_identities(query_seqs, k, accessions_2d, acc_to_seq):
             
     return percent_identity_matrix
 
-def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", output_dir=None, prefix="unnotated"):
+def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", output_dir=None, prefix="unnotated", faiss_metric="cosine"):
     """
     Annotate protein sequences using a database directory containing embeddings and UniProt CSV.
     Args:
@@ -98,6 +110,7 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
         metric: Embedding metric
         output_dir: Output directory
         prefix: Output file prefix
+        faiss_metric: FAISS metric to use ("cosine" or "euclidean")
     """
     # Find files in database_dir
     h5_files = glob.glob(os.path.join(database_dir, "*.h5"))
@@ -118,7 +131,7 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
     
     # Find nearest neighbors
     similarity, indices, accessions = find_nearest_neighbors(
-        query_embeddings, reference_embeddings, k, data_ids
+        query_embeddings, reference_embeddings, k, data_ids, database_dir, metric, faiss_metric=faiss_metric
     )
     
     # Load and filter UniProt data
@@ -151,4 +164,12 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
 if __name__ == "__main__":
     args = parse_args()
     logger.info(f"Starting Unnotate with args: {args}")
-    unnotate(args.fasta_file, args.database_dir, args.k, args.metric, args.output_dir, args.prefix)
+    unnotate(
+        args.fasta_file,
+        args.database_dir,
+        args.k,
+        args.metric,
+        args.output_dir,
+        args.prefix,
+        faiss_metric=args.faiss_metric
+    )
