@@ -31,16 +31,17 @@ def main():
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Unnotate with args: {args}")
     # Determine use_gpu based on --cpu flag and CUDA availability
-    print(f"CUDA available: {torch.cuda.is_available()}")
-    print(f"Using CPU: {args.cpu}")
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
-    logger.info(f"Using CPU: {args.cpu}")
+    logger.info(f"Using GPU: {not args.cpu}")
     if args.cpu:
         use_gpu = False
     else:
         use_gpu = torch.cuda.is_available()
         if not use_gpu:
             logger.warning("GPU is not available, using CPU instead")
+    # if cuda is available, and use_gpu is not set, let user know that they can use CPU
+    if torch.cuda.is_available() and not use_gpu:
+        logger.warning("CUDA is available, but use_gpu is not set. Try running without --cpu to use GPU - much faster.")
 
     if args.command == "download_db":
         download_gdrive_folder(dest_path=args.dest)
