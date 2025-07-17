@@ -4,8 +4,8 @@ import os
 import glob
 import logging
 import torch
+import pandas as pd
 import pathlib
-import tempfile
 from Bio import SeqIO
 from .download_database import download_gdrive_folder
 from .unnotate import unnotate
@@ -32,6 +32,28 @@ def detect_input_type(fasta_file, user_input_type):
             return "dna"
         else:
             return "protein"
+
+def append_product_to_gff(gff_file, full_name_csv):
+    """Append product=[full_name] to each CDS in GFF using first column of full_name CSV."""
+    full_names = pd.read_csv(full_name_csv).iloc[:, 0].tolist()
+    with open(gff_file) as f:
+        lines = f.readlines()
+    out, idx = [], 0
+    for line in lines:
+        if not (line.strip() and not line.startswith(('#', '>'))):
+            out.append(line)
+            continue
+        parts = line.rstrip('\n').split('\t')
+        if len(parts) >= 9 and parts[2] == 'CDS':
+            if 'product=' not in parts[8]:
+                product = full_names[idx] if idx < len(full_names) else ''
+                parts[8] += f';product={product}'
+            out.append('\t'.join(parts) + '\n')
+            idx += 1
+        else:
+            out.append(line)
+    with open(gff_file, 'w') as f:
+        f.writelines(out)
 
 def main():
     parser = argparse.ArgumentParser(prog="unnotate")
@@ -79,19 +101,18 @@ def main():
             # Translate DNA to protein using pyrodigal, output to args.output_dir
             logger.info(f"Translating DNA FASTA {fasta_file} to protein using pyrodigal_gv...")
             run_pyrodigal_gv(fasta_path=fasta_file, output_dir=pathlib.Path(args.output_dir))
-            # Find the .faa and .gff files
-            prefix = os.path.splitext(os.path.basename(fasta_file))[0]
-            faa_file = os.path.join(args.output_dir, f"{prefix}_proteins.faa")
-            gff_file = os.path.join(args.output_dir, f"{prefix}.gff")
+            fasta_prefix = os.path.splitext(os.path.basename(fasta_file))[0]
+            # Use consistent prefix for all outputs
+            faa_file = os.path.join(args.output_dir, f"{fasta_prefix}_proteins.faa")
+            gff_file = os.path.join(args.output_dir, f"{fasta_prefix}.gff")
+            full_name_csv = os.path.join(args.output_dir, f"{args.prefix}_full_name.csv")
+            lovis4u_pdf = os.path.join(args.output_dir, f"{args.prefix}_annotation.pdf")
+            # Check for expected outputs
             if not os.path.exists(faa_file):
                 logger.error(f"Protein FASTA file {faa_file} not found after translation.")
                 sys.exit(1)
             fasta_file = faa_file
             logger.info(f"Using translated protein FASTA: {fasta_file}")
-            # Only for DNA input: generate lovis4u PDF
-            lovis4u_pdf = os.path.join(args.output_dir, f"{prefix}_annotation.pdf")
-            logger.info(f"Generating lovis4u PDF at {lovis4u_pdf} from {gff_file}")
-            generate_lovis_plot(gff_path=gff_file, output_pdf_path=lovis4u_pdf)
         # For protein input, do nothing extra (no dummy GFF, no lovis4u)
         # Find embeddings and CSV in the database dir
         h5_files = glob.glob(os.path.join(args.database_dir, "*.h5"))
@@ -102,6 +123,7 @@ def main():
         if not csv_files:
             print(f"No .csv UniProt file found in {args.database_dir}", file=sys.stderr)
             sys.exit(1)
+        # Run annotation pipeline
         unnotate(
             fasta_file=fasta_file,
             database_dir=args.database_dir,
@@ -112,6 +134,15 @@ def main():
             faiss_metric=args.faiss_metric,
             use_gpu=use_gpu
         )
+        # After unnotate, for DNA input, append product and run lovis4u
+        if input_type == "dna":
+            # Append product to GFF using full_name.csv
+            if os.path.exists(full_name_csv):
+                logger.info(f"Appending product=[full_name] to {gff_file} using {full_name_csv}")
+                append_product_to_gff(gff_file, full_name_csv)
+            # Generate lovis4u PDF
+            logger.info(f"Generating lovis4u PDF at {lovis4u_pdf} from {gff_file}")
+            generate_lovis_plot(gff_path=gff_file, output_pdf_path=lovis4u_pdf)
     else:
         parser.print_help()
         sys.exit(1)

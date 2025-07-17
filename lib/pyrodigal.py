@@ -35,7 +35,7 @@ def run_pyrodigal_gv(
     nuc_fasta = output_dir / f"{prefix}_genes.fna"
     aa_fasta  = output_dir / f"{prefix}_proteins.faa"
 
-    logger.info("Initializing ViralGeneFinder (meta=%s, table=%d)", meta)
+    logger.info(f"Initializing ViralGeneFinder (meta={meta})")
     orf_finder = pyrodigal_gv.ViralGeneFinder(meta=meta)
 
     def _find_genes(record):
@@ -64,4 +64,4 @@ def run_pyrodigal_gv(
             genes.write_genes(nuc_out, sequence_id=record_id)
             genes.write_translations(aa_out, sequence_id=record_id)
 
-    logger.info("Gene Finding Complete! Outputs written to %s", output_dir)
+    logger.info(f"Gene Finding Complete! Outputs written to {output_dir}")

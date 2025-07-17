@@ -69,7 +69,10 @@ def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, 
     return similarity, indices, accessions
 
 def save_results(output_dir, df, accessions, similarity, percent_identity_matrix, prefix="unnotated"):
-    """Save results to output directory and create zip file. All arrays are saved in a single .npz file."""
+    """
+    Save results to output directory and create zip file. All arrays are saved in a single .npz file.
+    Also outputs full_name and domain matrices corresponding to the accession matrix.
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     # Save individual files
@@ -80,6 +83,8 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     similarity_csv_path = join(output_dir, f"{prefix}_cosine_similarity.csv")
     identity_csv_path = join(output_dir, f"{prefix}_sequence_identity.csv")
     accession_csv_path = join(output_dir, f"{prefix}_accession.csv")
+    full_name_csv_path = join(output_dir, f"{prefix}_full_name.csv")
+    domain_csv_path = join(output_dir, f"{prefix}_domain.csv")
 
     df.to_csv(csv_path, index=False)
     np.savez(npz_path, accession=accessions, cosine_similarity=similarity, sequence_identity=percent_identity_matrix)
@@ -96,6 +101,28 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     accession_df = pd.DataFrame(accessions.astype(str), columns=[f"neighbor_{i+1}" for i in range(accessions.shape[1])])
     accession_df.to_csv(accession_csv_path, index=False)
 
+    # Build mapping from accession to full_name and domain
+    acc_to_full_name = {row["accession"]: row["full_name"] if pd.notna(row["full_name"]) else "" for _, row in df.iterrows()}
+    acc_to_taxonomy = {row["accession"]: row["taxonomy_lineage"] if pd.notna(row["taxonomy_lineage"]) else "" for _, row in df.iterrows()}
+    # Build full_name and domain matrices
+    full_name_matrix = np.empty_like(accessions, dtype=object)
+    domain_matrix = np.empty_like(accessions, dtype=object)
+    for i in range(accessions.shape[0]):
+        for j in range(accessions.shape[1]):
+            acc = accessions[i, j]
+            full_name_matrix[i, j] = acc_to_full_name.get(acc, "Unknown")
+            taxonomy = acc_to_taxonomy.get(acc, "")
+            if taxonomy:
+                domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
+                domain_matrix[i, j] = domain if domain else "Unknown"
+            else:
+                domain_matrix[i, j] = "Unknown"
+    # Save as CSV
+    full_name_df = pd.DataFrame(full_name_matrix, columns=[f"neighbor_{i+1}" for i in range(full_name_matrix.shape[1])])
+    full_name_df.to_csv(full_name_csv_path, index=False)
+    domain_df = pd.DataFrame(domain_matrix, columns=[f"neighbor_{i+1}" for i in range(domain_matrix.shape[1])])
+    domain_df.to_csv(domain_csv_path, index=False)
+
     # Create zip file containing only uniprot.csv and results.npz (not the individual CSV files)
     zip_path = join(output_dir, f"{prefix}_streamlit.zip")
     with zipfile.ZipFile(zip_path, 'w') as zipf:
@@ -106,6 +133,8 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     logger.info(f"Saved cosine similarity matrix in {similarity_csv_path}")
     logger.info(f"Saved sequence identity matrix in {identity_csv_path}")
     logger.info(f"Saved accession matrix in {accession_csv_path}")
+    logger.info(f"Saved full_name matrix in {full_name_csv_path}")
+    logger.info(f"Saved domain matrix in {domain_csv_path}")
     logger.info(f"Saved all results in {npz_path}")
     logger.info(f"Created zip archive of Streamlit-compatible files at {zip_path}")
 
