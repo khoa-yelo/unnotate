@@ -85,6 +85,7 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     accession_csv_path = join(output_dir, f"{prefix}_accession.csv")
     full_name_csv_path = join(output_dir, f"{prefix}_full_name.csv")
     domain_csv_path = join(output_dir, f"{prefix}_domain.csv")
+    sequence_length_csv_path = join(output_dir, f"{prefix}_sequence_length.csv")
 
     df.to_csv(csv_path, index=False)
     np.savez(npz_path, accession=accessions, cosine_similarity=similarity, sequence_identity=percent_identity_matrix)
@@ -101,27 +102,32 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     accession_df = pd.DataFrame(accessions.astype(str), columns=[f"neighbor_{i+1}" for i in range(accessions.shape[1])])
     accession_df.to_csv(accession_csv_path, index=False)
 
-    # Build mapping from accession to full_name and domain
+    # Build mapping from accession to full_name, taxonomy domain, and sequence length
     acc_to_full_name = {row["accession"]: row["full_name"] if pd.notna(row["full_name"]) else "" for _, row in df.iterrows()}
     acc_to_taxonomy = {row["accession"]: row["taxonomy_lineage"] if pd.notna(row["taxonomy_lineage"]) else "" for _, row in df.iterrows()}
+    acc_to_sequence_length = {row["accession"]: (row["sequence_length"]) if pd.notna(row["sequence_length"]) else "" for _, row in df.iterrows()}
     # Build full_name and domain matrices
     full_name_matrix = np.empty_like(accessions, dtype=object)
-    domain_matrix = np.empty_like(accessions, dtype=object)
+    taxa_domain_matrix = np.empty_like(accessions, dtype=object)
+    sequence_length_matrix = np.empty_like(accessions, dtype=int)
     for i in range(accessions.shape[0]):
         for j in range(accessions.shape[1]):
             acc = accessions[i, j]
             full_name_matrix[i, j] = acc_to_full_name.get(acc, "Unknown")
+            sequence_length_matrix[i, j] = acc_to_sequence_length.get(acc, "")
             taxonomy = acc_to_taxonomy.get(acc, "")
             if taxonomy:
                 domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                domain_matrix[i, j] = domain if domain else "Unknown"
+                taxa_domain_matrix[i, j] = domain if domain else "Unknown"
             else:
-                domain_matrix[i, j] = "Unknown"
+                taxa_domain_matrix[i, j] = "Unknown"
     # Save as CSV
     full_name_df = pd.DataFrame(full_name_matrix, columns=[f"neighbor_{i+1}" for i in range(full_name_matrix.shape[1])])
     full_name_df.to_csv(full_name_csv_path, index=False)
-    domain_df = pd.DataFrame(domain_matrix, columns=[f"neighbor_{i+1}" for i in range(domain_matrix.shape[1])])
+    domain_df = pd.DataFrame(taxa_domain_matrix, columns=[f"neighbor_{i+1}" for i in range(taxa_domain_matrix.shape[1])])
     domain_df.to_csv(domain_csv_path, index=False)
+    sequence_length_df = pd.DataFrame(sequence_length_matrix, columns=[f"neighbor_{i+1}" for i in range(sequence_length_matrix.shape[1])])
+    sequence_length_df.to_csv(sequence_length_csv_path, index=False)
 
     # Create zip file containing only uniprot.csv and results.npz (not the individual CSV files)
     zip_path = join(output_dir, f"{prefix}_streamlit.zip")
@@ -135,6 +141,7 @@ def save_results(output_dir, df, accessions, similarity, percent_identity_matrix
     logger.info(f"Saved accession matrix in {accession_csv_path}")
     logger.info(f"Saved full_name matrix in {full_name_csv_path}")
     logger.info(f"Saved domain matrix in {domain_csv_path}")
+    logger.info(f"Saved sequence length matrix in {sequence_length_csv_path}")
     logger.info(f"Saved all results in {npz_path}")
     logger.info(f"Created zip archive of Streamlit-compatible files at {zip_path}")
 

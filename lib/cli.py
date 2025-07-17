@@ -9,6 +9,7 @@ import pathlib
 from Bio import SeqIO
 from .download_database import download_gdrive_folder
 from .unnotate import unnotate
+from .summary_statistics import compute_summary_statistics
 
 # Local import for DNA translation (pyrodigal)
 from .pyrodigal import run_pyrodigal_gv
@@ -134,7 +135,6 @@ def main():
             faiss_metric=args.faiss_metric,
             use_gpu=use_gpu
         )
-        # After unnotate, for DNA input, append product and run lovis4u
         if input_type == "dna":
             # Append product to GFF using full_name.csv
             if os.path.exists(full_name_csv):
@@ -143,6 +143,14 @@ def main():
             # Generate lovis4u PDF
             logger.info(f"Generating lovis4u PDF at {lovis4u_pdf} from {gff_file}")
             generate_lovis_plot(gff_path=gff_file, output_pdf_path=lovis4u_pdf)
+        logger.info("Computing summary statistics...")
+        compute_summary_statistics(
+            database_dir=args.database_dir,
+            cosine_similarity_csv=os.path.join(args.output_dir, f"{args.prefix}_cosine_similarity.csv"),
+            sequence_length_csv=os.path.join(args.output_dir, f"{args.prefix}_sequence_length.csv"),
+            output_dir=args.output_dir,
+            prefix=args.prefix
+        )
     else:
         parser.print_help()
         sys.exit(1)
