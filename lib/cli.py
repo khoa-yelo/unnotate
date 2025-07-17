@@ -2,10 +2,36 @@ import argparse
 import sys
 import os
 import glob
-from .download_database import download_gdrive_folder
-from .unnotate import unnotate
 import logging
 import torch
+import pathlib
+import tempfile
+from Bio import SeqIO
+from .download_database import download_gdrive_folder
+from .unnotate import unnotate
+
+# Local import for DNA translation (pyrodigal)
+from .pyrodigal import run_pyrodigal_gv
+from .lovis4u import generate_lovis_plot
+
+def detect_input_type(fasta_file, user_input_type):
+    """
+    Detect if the input FASTA is DNA or protein.
+    If user_input_type is not 'auto', return it.
+    Otherwise, read the first sequence and check vocabulary.
+    """
+    if user_input_type != "auto":
+        return user_input_type
+    with open(fasta_file) as handle:
+        first_record = next(SeqIO.parse(handle, "fasta"))
+        seq = str(first_record.seq).upper()
+        dna_letters = set("ATCGN")
+        seq_letters = set(seq)
+        # If all letters are in DNA set, treat as DNA, else protein
+        if seq_letters <= dna_letters:
+            return "dna"
+        else:
+            return "protein"
 
 def main():
     parser = argparse.ArgumentParser(prog="unnotate")
@@ -25,12 +51,12 @@ def main():
     parser_annot.add_argument("--prefix", default="unnotated")
     parser_annot.add_argument("--faiss-metric", default="cosine")
     parser_annot.add_argument("--cpu", action="store_true")
+    parser_annot.add_argument("--input-type", choices=["auto", "protein", "dna"], default="auto", help="Type of input: protein (amino acid FASTA), dna (nucleotide FASTA), or auto (infer from sequence)")
 
     args = parser.parse_args()
 
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Unnotate with args: {args}")
-    # Determine use_gpu based on --cpu flag and CUDA availability
     logger.info(f"CUDA available: {torch.cuda.is_available()}")
     logger.info(f"Using GPU: {not args.cpu}")
     if args.cpu:
@@ -39,13 +65,34 @@ def main():
         use_gpu = torch.cuda.is_available()
         if not use_gpu:
             logger.warning("GPU is not available, using CPU instead")
-    # if cuda is available, and use_gpu is not set, let user know that they can use CPU
     if torch.cuda.is_available() and not use_gpu:
         logger.warning("CUDA is available, but use_gpu is not set. Try running without --cpu to use GPU - much faster.")
 
     if args.command == "download_db":
         download_gdrive_folder(dest_path=args.dest)
     elif args.command == "unnot":
+        fasta_file = args.fasta_file
+        # Detect input type (DNA or protein)
+        input_type = detect_input_type(fasta_file, args.input_type)
+        logger.info(f"Detected input type: {input_type}")
+        if input_type == "dna":
+            # Translate DNA to protein using pyrodigal, output to args.output_dir
+            logger.info(f"Translating DNA FASTA {fasta_file} to protein using pyrodigal_gv...")
+            run_pyrodigal_gv(fasta_path=fasta_file, output_dir=pathlib.Path(args.output_dir))
+            # Find the .faa and .gff files
+            prefix = os.path.splitext(os.path.basename(fasta_file))[0]
+            faa_file = os.path.join(args.output_dir, f"{prefix}_proteins.faa")
+            gff_file = os.path.join(args.output_dir, f"{prefix}.gff")
+            if not os.path.exists(faa_file):
+                logger.error(f"Protein FASTA file {faa_file} not found after translation.")
+                sys.exit(1)
+            fasta_file = faa_file
+            logger.info(f"Using translated protein FASTA: {fasta_file}")
+            # Only for DNA input: generate lovis4u PDF
+            lovis4u_pdf = os.path.join(args.output_dir, f"{prefix}_annotation.pdf")
+            logger.info(f"Generating lovis4u PDF at {lovis4u_pdf} from {gff_file}")
+            generate_lovis_plot(gff_path=gff_file, output_pdf_path=lovis4u_pdf)
+        # For protein input, do nothing extra (no dummy GFF, no lovis4u)
         # Find embeddings and CSV in the database dir
         h5_files = glob.glob(os.path.join(args.database_dir, "*.h5"))
         csv_files = glob.glob(os.path.join(args.database_dir, "*.csv"))
@@ -56,7 +103,7 @@ def main():
             print(f"No .csv UniProt file found in {args.database_dir}", file=sys.stderr)
             sys.exit(1)
         unnotate(
-            fasta_file=args.fasta_file,
+            fasta_file=fasta_file,
             database_dir=args.database_dir,
             k=args.k,
             metric=args.metric,

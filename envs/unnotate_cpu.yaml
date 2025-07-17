@@ -19,3 +19,5 @@ dependencies:
   - pip:
       - parasail
       - esm==3.1.2
+      - lovis4u
+      - pyrodigal-gv
