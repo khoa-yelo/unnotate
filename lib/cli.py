@@ -138,9 +138,7 @@ def main():
             input_type=input_type,
             gff_prefix=gff_prefix,
             pval_csv=pval_csv,
-            pval_threshold=pval_threshold,
-            domain_csv=domain_csv,
-            cosine_similarity_csv=cosine_similarity_csv
+            pval_threshold=pval_threshold
         )
     else:
         parser.print_help()

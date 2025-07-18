@@ -85,6 +85,7 @@ class FaissKNN:
         """
         index = faiss.read_index(path)
         if use_gpu:
+            print("Using GPU")
             res = faiss.StandardGpuResources()
             index = faiss.index_cpu_to_gpu(res, gpu_device, index)
         dim = index.d
