@@ -10,10 +10,10 @@ from Bio import SeqIO
 from .download_database import download_gdrive_folder
 from .unnotate import unnotate
 from .summary_statistics import compute_summary_statistics
+from .summarize_outputs import summarize_outputs
 
 # Local import for DNA translation (pyrodigal)
 from .pyrodigal import run_pyrodigal_gv
-from .lovis4u import generate_lovis_plot
 
 def detect_input_type(fasta_file, user_input_type):
     """
@@ -34,27 +34,7 @@ def detect_input_type(fasta_file, user_input_type):
         else:
             return "protein"
 
-def append_product_to_gff(gff_file, full_name_csv):
-    """Append product=[full_name] to each CDS in GFF using first column of full_name CSV."""
-    full_names = pd.read_csv(full_name_csv).iloc[:, 0].tolist()
-    with open(gff_file) as f:
-        lines = f.readlines()
-    out, idx = [], 0
-    for line in lines:
-        if not (line.strip() and not line.startswith(('#', '>'))):
-            out.append(line)
-            continue
-        parts = line.rstrip('\n').split('\t')
-        if len(parts) >= 9 and parts[2] == 'CDS':
-            if 'product=' not in parts[8]:
-                product = full_names[idx] if idx < len(full_names) else ''
-                parts[8] += f';product={product}'
-            out.append('\t'.join(parts) + '\n')
-            idx += 1
-        else:
-            out.append(line)
-    with open(gff_file, 'w') as f:
-        f.writelines(out)
+
 
 def main():
     parser = argparse.ArgumentParser(prog="unnotate")
@@ -98,23 +78,22 @@ def main():
         # Detect input type (DNA or protein)
         input_type = detect_input_type(fasta_file, args.input_type)
         logger.info(f"Detected input type: {input_type}")
+        gff_prefix = None
         if input_type == "dna":
             # Translate DNA to protein using pyrodigal, output to args.output_dir
             logger.info(f"Translating DNA FASTA {fasta_file} to protein using pyrodigal_gv...")
             run_pyrodigal_gv(fasta_path=fasta_file, output_dir=pathlib.Path(args.output_dir))
             fasta_prefix = os.path.splitext(os.path.basename(fasta_file))[0]
+            gff_prefix = fasta_prefix  # GFF file uses the original fasta filename
             # Use consistent prefix for all outputs
             faa_file = os.path.join(args.output_dir, f"{fasta_prefix}_proteins.faa")
-            gff_file = os.path.join(args.output_dir, f"{fasta_prefix}.gff")
-            full_name_csv = os.path.join(args.output_dir, f"{args.prefix}_full_name.csv")
-            lovis4u_pdf = os.path.join(args.output_dir, f"{args.prefix}_annotation.pdf")
             # Check for expected outputs
             if not os.path.exists(faa_file):
                 logger.error(f"Protein FASTA file {faa_file} not found after translation.")
                 sys.exit(1)
             fasta_file = faa_file
             logger.info(f"Using translated protein FASTA: {fasta_file}")
-        # For protein input, do nothing extra (no dummy GFF, no lovis4u)
+        
         # Find embeddings and CSV in the database dir
         h5_files = glob.glob(os.path.join(args.database_dir, "*.h5"))
         csv_files = glob.glob(os.path.join(args.database_dir, "*.csv"))
@@ -124,6 +103,7 @@ def main():
         if not csv_files:
             print(f"No .csv UniProt file found in {args.database_dir}", file=sys.stderr)
             sys.exit(1)
+        
         # Run annotation pipeline
         unnotate(
             fasta_file=fasta_file,
@@ -135,14 +115,8 @@ def main():
             faiss_metric=args.faiss_metric,
             use_gpu=use_gpu
         )
-        if input_type == "dna":
-            # Append product to GFF using full_name.csv
-            if os.path.exists(full_name_csv):
-                logger.info(f"Appending product=[full_name] to {gff_file} using {full_name_csv}")
-                append_product_to_gff(gff_file, full_name_csv)
-            # Generate lovis4u PDF
-            logger.info(f"Generating lovis4u PDF at {lovis4u_pdf} from {gff_file}")
-            generate_lovis_plot(gff_path=gff_file, output_pdf_path=lovis4u_pdf)
+        
+        # Compute summary statistics
         logger.info("Computing summary statistics...")
         compute_summary_statistics(
             database_dir=args.database_dir,
@@ -150,6 +124,23 @@ def main():
             sequence_length_csv=os.path.join(args.output_dir, f"{args.prefix}_sequence_length.csv"),
             output_dir=args.output_dir,
             prefix=args.prefix
+        )
+
+        # Post-process outputs (GFF annotation and PDF generation for DNA input)
+        pval_csv = os.path.join(args.output_dir, f"{args.prefix}_pvals.csv")
+        domain_csv = os.path.join(args.output_dir, f"{args.prefix}_domain.csv")
+        cosine_similarity_csv = os.path.join(args.output_dir, f"{args.prefix}_cosine_similarity.csv")
+        query_count = len(pd.read_csv(cosine_similarity_csv))
+        pval_threshold = 0.05 / query_count # 0.05 is the significance level
+        summarize_outputs(
+            output_dir=args.output_dir,
+            prefix=args.prefix,
+            input_type=input_type,
+            gff_prefix=gff_prefix,
+            pval_csv=pval_csv,
+            pval_threshold=pval_threshold,
+            domain_csv=domain_csv,
+            cosine_similarity_csv=cosine_similarity_csv
         )
     else:
         parser.print_help()
