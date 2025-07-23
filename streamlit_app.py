@@ -23,7 +23,7 @@ def load_csv_and_arrays(dataset_type="Virus"):
     """Load CSV and numpy arrays for the selected dataset type."""
     BASE_DIR = Path(__file__).resolve().parent
     data_path = BASE_DIR / "test_data"
-    prefix = "viral" if dataset_type == "Virus" else "bacterial" if dataset_type == "Bacteria" else "putative_phage_plasmid"
+    prefix = "viral" if dataset_type == "Virus" else "bacterial" if dataset_type == "Bacteria" else "putative_phage"
     
     # First try to load from ZIP files
     zip_paths = [
@@ -49,11 +49,13 @@ def load_csv_and_arrays(dataset_type="Virus"):
                             accession_arrays_loaded = npz["accession"]
                             similarity_array = npz["cosine_similarity"]
                             sequence_similarity_array = npz["sequence_identity"] if "sequence_identity" in npz else None
+                            pvalue_array = npz["pvalue"] if "pvalue" in npz else None
                             accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
-                            return df, accession_arrays, similarity_array, sequence_similarity_array
+                            score_array = npz["score"] if "score" in npz else None
+                            return df, accession_arrays, similarity_array, sequence_similarity_array, pvalue_array, score_array
             except Exception:
                 continue
-    return None, None, None, None
+    return None, None, None, None, None, None
 
 def process_uploaded_zip(uploaded_file):
     """Process uploaded zip file and extract data."""
@@ -71,17 +73,19 @@ def process_uploaded_zip(uploaded_file):
                         npz_file = os.path.join(temp_dir, file_path)
                 if not (csv_file and npz_file):
                     st.error("❌ Missing required files (.csv and .npz) in the zip")
-                    return None, None, None, None
+                    return None, None, None, None, None, None
                 df = pd.read_csv(csv_file)
                 npz = np.load(npz_file, allow_pickle=True)
                 accession_arrays_loaded = npz["accession"]
                 similarity_array = npz["cosine_similarity"]
                 sequence_similarity_array = npz["sequence_identity"] if "sequence_identity" in npz else None
+                pvalue_array = npz["pvalue"] if "pvalue" in npz else None
                 accession_arrays = [[acc.decode('utf-8') if isinstance(acc, bytes) else acc for acc in (arr.tolist() if hasattr(arr, 'tolist') else arr)] for arr in accession_arrays_loaded]
-                return df, accession_arrays, similarity_array, sequence_similarity_array
+                score_array = npz["score"] if "score" in npz else None
+                return df, accession_arrays, similarity_array, sequence_similarity_array, pvalue_array, score_array
     except Exception as e:
         st.error(f"❌ Error processing zip file: {e}")
-        return None, None, None, None
+        return None, None, None, None, None, None
 
 def precompute_domain_data(df, accession_arrays):
     """Precompute domain and hover text for all accessions."""
@@ -615,6 +619,60 @@ def create_similarity_scatter_plot(df, accession_arrays, similarity_array, seque
     
     return fig
 
+def create_pvalue_heatmap(df, accession_arrays, pvalue_array, selected_domain=None, domain_cache=None, hover_cache=None):
+    """Create p-value heatmap with optional domain-based sorting."""
+    if domain_cache is None or hover_cache is None:
+        domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
+    arrays_to_visualize, pvalue_data = precompute_sorted_arrays(
+        accession_arrays, pvalue_array, domain_cache, selected_domain
+    )
+    max_len = max(len(arr) for arr in arrays_to_visualize)
+    hover_texts = []
+    customdata = []
+    for cds_idx, accessions in enumerate(arrays_to_visualize):
+        row_hover = []
+        row_urls = []
+        for pos_idx, acc in enumerate(accessions):
+            pval = pvalue_data[cds_idx][pos_idx]
+            base_hover = hover_cache.get(acc, f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>")
+            hover_text = f"""
+            <b>CDS Index:</b> {cds_idx+1}<br>
+            <b>Position Index:</b> {pos_idx+1}<br>
+            <b>p-value:</b> {pval:.3e}<br>
+            {base_hover}
+            """
+            uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+            row_hover.append(hover_text)
+            row_urls.append(uniprot_url)
+        row_hover.extend([''] * (max_len - len(accessions)))
+        row_urls.extend([''] * (max_len - len(accessions)))
+        hover_texts.append(row_hover)
+        customdata.append(row_urls)
+    hover_texts_transposed = list(zip(*hover_texts))[::-1]
+    customdata_transposed = list(zip(*customdata))[::-1]
+    z = np.array(pvalue_data).T[::-1]
+    fig = go.Figure(data=go.Heatmap(
+        z=z,
+        colorscale='Viridis',
+        colorbar=dict(title="p-value", tickformat='.1e'),
+        hovertext=hover_texts_transposed,
+        hoverinfo='text',
+        customdata=customdata_transposed,
+        zmin=np.nanmin(z),
+        zmax=np.nanmax(z)
+    ))
+    title = "p-value Heatmap"
+    if selected_domain and selected_domain != "All Domains":
+        title += f" - Sorted by {selected_domain} first, then by similarity"
+    fig.update_layout(
+        title=title,
+        xaxis_title="CDS Index",
+        yaxis_title="Protein Index",
+        height=400,
+        width=1200
+    )
+    return fig
+
 def plot_go_function_barplot(df, go_column='go_F_descriptions', top_n=30, title=None):
     """Plot a barplot of GO terms from a specified column, sorted by frequency."""
     if go_column not in df.columns:
@@ -644,6 +702,60 @@ def plot_go_function_barplot(df, go_column='go_F_descriptions', top_n=30, title=
         title=title or f"Top {top_n} GO Terms by Frequency"
     )
     st.plotly_chart(fig, use_container_width=True)
+
+def create_score_heatmap(df, accession_arrays, score_array, selected_domain=None, domain_cache=None, hover_cache=None):
+    """Create score heatmap with optional domain-based sorting."""
+    if domain_cache is None or hover_cache is None:
+        domain_cache, hover_cache, _ = precompute_domain_data(df, accession_arrays)
+    arrays_to_visualize, score_data = precompute_sorted_arrays(
+        accession_arrays, score_array, domain_cache, selected_domain
+    )
+    max_len = max(len(arr) for arr in arrays_to_visualize)
+    hover_texts = []
+    customdata = []
+    for cds_idx, accessions in enumerate(arrays_to_visualize):
+        row_hover = []
+        row_urls = []
+        for pos_idx, acc in enumerate(accessions):
+            score_value = score_data[cds_idx][pos_idx]
+            base_hover = hover_cache.get(acc, f"<b>Accession:</b> {acc}<br><b>Status:</b> Not found in database<br><b>Click to open UniProt page</b>")
+            hover_text = f"""
+            <b>CDS Index:</b> {cds_idx+1}<br>
+            <b>Position Index:</b> {pos_idx+1}<br>
+            <b>Score:</b> {score_value}<br>
+            {base_hover}
+            """
+            uniprot_url = f"https://www.uniprot.org/uniprot/{acc}"
+            row_hover.append(hover_text)
+            row_urls.append(uniprot_url)
+        row_hover.extend([''] * (max_len - len(accessions)))
+        row_urls.extend([''] * (max_len - len(accessions)))
+        hover_texts.append(row_hover)
+        customdata.append(row_urls)
+    hover_texts_transposed = list(zip(*hover_texts))[::-1]
+    customdata_transposed = list(zip(*customdata))[::-1]
+    z = np.array(score_data).T[::-1]
+    fig = go.Figure(data=go.Heatmap(
+        z=z,
+        colorscale='YlGnBu',
+        colorbar=dict(title="Score"),
+        hovertext=hover_texts_transposed,
+        hoverinfo='text',
+        customdata=customdata_transposed,
+        zmin=np.nanmin(z),
+        zmax=np.nanmax(z)
+    ))
+    title = "Score Heatmap"
+    if selected_domain and selected_domain != "All Domains":
+        title += f" - Sorted by {selected_domain} first, then by similarity"
+    fig.update_layout(
+        title=title,
+        xaxis_title="CDS Index",
+        yaxis_title="Protein Index",
+        height=400,
+        width=1200
+    )
+    return fig
 
 # ---------------------- Table Rendering ----------------------
 
@@ -710,20 +822,20 @@ def main():
     st.set_page_config(page_title="Protein Accession Visualizer", layout="wide")
     st.title("Unnotate: Annotation of Proteins with Unknown function + Uncertainty quantification + Uniprot Mapping")
     st.sidebar.header("Dataset Selection")
-    dataset_type = st.sidebar.selectbox("Choose Default Dataset:", ["Virus", "Bacteria", "Putative Phage Plasmid"], help="Select which default  dataset to visualize")
+    dataset_type = st.sidebar.selectbox("Choose Default Dataset:", ["Virus", "Bacteria", "Putative Phage"], help="Select which default  dataset to visualize")
     with st.expander("📥 Upload Data from ZIP File", expanded=True):
         st.write("Upload a `PREFIX_streamlit.zip` file containing the required data files:")
         uploaded_file = st.file_uploader("Choose a ZIP file", type=["zip"])
         if uploaded_file is not None:
             with st.spinner("Processing uploaded ZIP file..."):
-                df, accession_arrays, similarity_array, sequence_similarity_array = process_uploaded_zip(uploaded_file)
+                df, accession_arrays, similarity_array, sequence_similarity_array, pvalue_array, score_array = process_uploaded_zip(uploaded_file)
                 if df is not None and accession_arrays is not None and similarity_array is not None:
                     st.success("✅ Data loaded successfully from uploaded ZIP file!")
                 else:
                     st.error("❌ Failed to load data from uploaded ZIP file. Please check the file contents.")
         else:
             with st.spinner(f"Loading {dataset_type.lower()} data from local files..."):
-                df, accession_arrays, similarity_array, sequence_similarity_array = load_csv_and_arrays(dataset_type)
+                df, accession_arrays, similarity_array, sequence_similarity_array, pvalue_array, score_array = load_csv_and_arrays(dataset_type)
                 if df is not None and accession_arrays is not None and similarity_array is not None:
                     st.success(f"✅ Using default {dataset_type} dataset")
                 else:
@@ -819,10 +931,33 @@ def main():
         st.plotly_chart(scatter_fig, use_container_width=True)
     else:
         st.info("💡 No sequence similarity data available. Upload a zip file containing 'sequence_similarity_array.npy' to see this visualization.")
+
+    # --- Score Heatmap ---
+    if score_array is not None:
+        st.subheader("Score Heatmap")
+        score_fig = create_score_heatmap(
+            df, accession_arrays, score_array,
+            selected_domain if selected_domain != "All Domains" else None,
+            st.session_state.domain_cache,
+            st.session_state.hover_cache
+        )
+        st.plotly_chart(score_fig, use_container_width=True)
+    
+    # --- p-value Heatmap ---
+    if pvalue_array is not None:
+        st.subheader("p-value Heatmap")
+        pval_fig = create_pvalue_heatmap(
+            df, accession_arrays, pvalue_array,
+            selected_domain if selected_domain != "All Domains" else None,
+            st.session_state.domain_cache,
+            st.session_state.hover_cache
+        )
+        st.plotly_chart(pval_fig, use_container_width=True)
     
     # --- GO Function Frequency Barplot ---
     st.subheader("Top GO Molecular Function Terms (Frequency)")
     plot_go_function_barplot(df, go_column='go_F_descriptions', top_n=30)
+
     # --- Protein Information Table ---
     arrays_to_visualize, _ = precompute_sorted_arrays(accession_arrays, similarity_array, st.session_state.domain_cache, selected_domain)
     render_protein_info_table(arrays_to_visualize, st.session_state.relevant_df, st.session_state.domain_cache)

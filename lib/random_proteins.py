@@ -8,6 +8,7 @@ sys.path.insert(0,"/home/jovyan/workspace/unnotate/lib")
 from faiss_knn import FaissKNN
 import pandas as pd
 import h5py
+import tqdm
 
 class ProteinSearcher:
     # Constants
@@ -44,7 +45,8 @@ class ProteinSearcher:
         return ''.join(random.choices(ProteinSearcher.AMINO_ACIDS, k=length))
 
     @staticmethod
-    def generate_random_proteins(n=1000, min_len=40, max_len=1000):
+    def generate_random_proteins(n=1000, min_len=40, max_len=1000, seed=42):
+        random.seed(seed)
         """Generate n random protein sequences with lengths between min_len and max_len."""
         return [ProteinSearcher.random_protein_sequence(random.randint(min_len, max_len)) 
                 for _ in range(n)]
@@ -58,7 +60,7 @@ class ProteinSearcher:
         """Embed a batch of protein sequences with ESMC."""
         self.initialize_esmc()
         embeddings = []
-        for seq in seqs:
+        for seq in tqdm.tqdm(seqs):
             protein = ESMProtein(sequence=seq)
             protein_tensor = self.esmc_model.encode(protein)
             logits_output = self.esmc_model.logits(

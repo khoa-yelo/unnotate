@@ -14,6 +14,7 @@ import zipfile
 import glob
 from tqdm import tqdm
 import logging
+from .summary_statistics import compute_summary_statistics_score
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -68,83 +69,6 @@ def find_nearest_neighbors(query_embeddings, reference_embeddings, k, data_ids, 
     
     return similarity, indices, accessions
 
-def save_results(output_dir, df, accessions, similarity, percent_identity_matrix, prefix="unnotated"):
-    """
-    Save results to output directory and create zip file. All arrays are saved in a single .npz file.
-    Also outputs full_name and domain matrices corresponding to the accession matrix.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save individual files
-    csv_path = join(output_dir, f"{prefix}_uniprot.csv")
-    npz_path = join(output_dir, f"{prefix}_results.npz")
-    
-    # Create CSV files for sequence identity and cosine similarity
-    similarity_csv_path = join(output_dir, f"{prefix}_cosine_similarity.csv")
-    identity_csv_path = join(output_dir, f"{prefix}_sequence_identity.csv")
-    accession_csv_path = join(output_dir, f"{prefix}_accession.csv")
-    full_name_csv_path = join(output_dir, f"{prefix}_full_name.csv")
-    domain_csv_path = join(output_dir, f"{prefix}_domain.csv")
-    sequence_length_csv_path = join(output_dir, f"{prefix}_sequence_length.csv")
-
-    df.to_csv(csv_path, index=False)
-    np.savez(npz_path, accession=accessions, cosine_similarity=similarity, sequence_identity=percent_identity_matrix)
-    
-    # Save cosine similarity as CSV
-    similarity_df = pd.DataFrame(similarity, columns=[f"neighbor_{i+1}" for i in range(similarity.shape[1])])
-    similarity_df.to_csv(similarity_csv_path, index=False)
-    
-    # Save sequence identity as CSV
-    identity_df = pd.DataFrame(percent_identity_matrix, columns=[f"neighbor_{i+1}" for i in range(percent_identity_matrix.shape[1])])
-    identity_df.to_csv(identity_csv_path, index=False)
-    
-    # Save accession as CSV (ensure type is string)
-    accession_df = pd.DataFrame(accessions.astype(str), columns=[f"neighbor_{i+1}" for i in range(accessions.shape[1])])
-    accession_df.to_csv(accession_csv_path, index=False)
-
-    # Build mapping from accession to full_name, taxonomy domain, and sequence length
-    acc_to_full_name = {row["accession"]: row["full_name"] if pd.notna(row["full_name"]) else "" for _, row in df.iterrows()}
-    acc_to_taxonomy = {row["accession"]: row["taxonomy_lineage"] if pd.notna(row["taxonomy_lineage"]) else "" for _, row in df.iterrows()}
-    acc_to_sequence_length = {row["accession"]: (row["sequence_length"]) if pd.notna(row["sequence_length"]) else "" for _, row in df.iterrows()}
-    # Build full_name and domain matrices
-    full_name_matrix = np.empty_like(accessions, dtype=object)
-    taxa_domain_matrix = np.empty_like(accessions, dtype=object)
-    sequence_length_matrix = np.empty_like(accessions, dtype=int)
-    for i in range(accessions.shape[0]):
-        for j in range(accessions.shape[1]):
-            acc = accessions[i, j]
-            full_name_matrix[i, j] = acc_to_full_name.get(acc, "Unknown")
-            sequence_length_matrix[i, j] = acc_to_sequence_length.get(acc, "")
-            taxonomy = acc_to_taxonomy.get(acc, "")
-            if taxonomy:
-                domain = taxonomy.split(';')[0].strip() if ';' in taxonomy else taxonomy.strip()
-                taxa_domain_matrix[i, j] = domain if domain else "Unknown"
-            else:
-                taxa_domain_matrix[i, j] = "Unknown"
-    # Save as CSV
-    full_name_df = pd.DataFrame(full_name_matrix, columns=[f"neighbor_{i+1}" for i in range(full_name_matrix.shape[1])])
-    full_name_df.to_csv(full_name_csv_path, index=False)
-    domain_df = pd.DataFrame(taxa_domain_matrix, columns=[f"neighbor_{i+1}" for i in range(taxa_domain_matrix.shape[1])])
-    domain_df.to_csv(domain_csv_path, index=False)
-    sequence_length_df = pd.DataFrame(sequence_length_matrix, columns=[f"neighbor_{i+1}" for i in range(sequence_length_matrix.shape[1])])
-    sequence_length_df.to_csv(sequence_length_csv_path, index=False)
-
-    # Create zip file containing only uniprot.csv and results.npz (not the individual CSV files)
-    zip_path = join(output_dir, f"{prefix}_streamlit.zip")
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        zipf.write(csv_path, arcname=f"{prefix}_uniprot.csv")
-        zipf.write(npz_path, arcname=f"{prefix}_results.npz")
-
-    logger.info(f"Saved UniProt data in {csv_path}")
-    logger.info(f"Saved cosine similarity matrix in {similarity_csv_path}")
-    logger.info(f"Saved sequence identity matrix in {identity_csv_path}")
-    logger.info(f"Saved accession matrix in {accession_csv_path}")
-    logger.info(f"Saved full_name matrix in {full_name_csv_path}")
-    logger.info(f"Saved domain matrix in {domain_csv_path}")
-    logger.info(f"Saved sequence length matrix in {sequence_length_csv_path}")
-    logger.info(f"Saved all results in {npz_path}")
-    logger.info(f"Created zip archive of Streamlit-compatible files at {zip_path}")
-
 def calculate_sequence_identities(query_seqs, k, accessions_2d, acc_to_seq):
     """Calculate sequence identity between queries and their matches."""
     N_query = len(query_seqs)
@@ -166,10 +90,17 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
         database_dir: Directory containing .h5 (embeddings) and .csv (UniProt) files
         k: Number of nearest neighbors
         metric: Embedding metric
-        output_dir: Output directory
+        output_dir: Output directory (optional, not used for saving in this function)
         prefix: Output file prefix
         faiss_metric: FAISS metric to use ("cosine" or "euclidean")
         use_gpu: Whether to use GPU for FAISS
+    Returns:
+        df: DataFrame of filtered UniProt data
+        accessions: 2D array of accessions
+        similarity: 2D array of cosine similarities
+        percent_identity_matrix: 2D array of sequence identities
+    Note:
+        This function does NOT save any files. Saving and post-processing should be done after calling unnotate().
     """
     # Find files in database_dir
     h5_files = glob.glob(os.path.join(database_dir, "*.h5"))
@@ -198,28 +129,25 @@ def unnotate(fasta_file, database_dir, k=20, metric="mean_middle_layer_12", outp
     df = pd.read_csv(uniprot_db)
     df = df[df["accession"].isin(accessions.flatten().astype(str))]
     
-    if output_dir:
-        # Load sequences and prepare for alignment
-        logger.info("Performing sequence alignment of queries to their k nearest neighbors...")
-        query_seqs = load_fasta_sequences(fasta_file)
-        query_seqs = [q[1] for q in query_seqs]
-        
-        # Build mapping from accession to sequence
-        acc_to_seq = {row["accession"]: row["sequence"] 
-                     for _, row in df.iterrows() 
-                     if pd.notna(row["sequence"])}
-        
-        # Reshape indices for sequence identity calculation
-        indices_2d = indices.reshape(-1, k)
-        accessions_2d = data_ids[indices_2d].astype(str)
-        
-        # Calculate sequence identities
-        percent_identity_matrix = calculate_sequence_identities(
-            query_seqs, k, accessions_2d, acc_to_seq
-        )
-        
-        # Save all results
-        save_results(output_dir, df, accessions, similarity, percent_identity_matrix, prefix)
+    # Load sequences and prepare for alignment
+    logger.info("Performing sequence alignment of queries to their k nearest neighbors...")
+    query_seqs = load_fasta_sequences(fasta_file)
+    query_seqs = [q[1] for q in query_seqs]
+    
+    # Build mapping from accession to sequence
+    acc_to_seq = {row["accession"]: row["sequence"] 
+                 for _, row in df.iterrows() 
+                 if pd.notna(row["sequence"])}
+    
+    # Reshape indices for sequence identity calculation
+    indices_2d = indices.reshape(-1, k)
+    accessions_2d = data_ids[indices_2d].astype(str)
+    
+    # Calculate sequence identities
+    percent_identity_matrix = calculate_sequence_identities(
+        query_seqs, k, accessions_2d, acc_to_seq
+    )
+    return df, accessions, similarity, percent_identity_matrix
 
 if __name__ == "__main__":
     args = parse_args()
@@ -235,7 +163,8 @@ if __name__ == "__main__":
         use_gpu = torch.cuda.is_available()
         if not use_gpu:
             logger.warning("GPU is not available, using CPU instead")
-    unnotate(
+    # Call unnotate and get results
+    df, accessions, similarity, percent_identity_matrix = unnotate(
         args.fasta_file,
         args.database_dir,
         args.k,
@@ -245,3 +174,18 @@ if __name__ == "__main__":
         faiss_metric=args.faiss_metric,
         use_gpu=use_gpu
     )
+
+    # Save all results
+    # Compute score matrix if cluster database exists
+    cluster_db_path = os.path.join(args.database_dir, "uniprot_swiss_clusters_with_pvalues.tsv")
+    score_matrix = None
+    cosine_similarity_csv = os.path.join(args.output_dir, f"{args.prefix}_cosine_similarity.csv")
+    accession_csv = os.path.join(args.output_dir, f"{args.prefix}_accession.csv")
+    if os.path.exists(cluster_db_path) and os.path.exists(cosine_similarity_csv) and os.path.exists(accession_csv):
+        score_matrix = compute_summary_statistics_score(
+            database_path=cluster_db_path,
+            cosine_similarity_csv=cosine_similarity_csv,
+            accession_csv=accession_csv
+        )
+    # The save_results function is now called here
+    # save_results(args.output_dir, df, accessions, similarity, percent_identity_matrix, args.prefix, score_matrix=score_matrix)

@@ -54,6 +54,58 @@ def compute_summary_statistics(database_dir, cosine_similarity_csv, sequence_len
     return df_out
 
 
+def compute_summary_statistics_score(database_path, cosine_similarity, accession):
+    """
+    Compute a score matrix based on cosine similarity, accession, and the cluster database.
+    For each (query, neighbor):
+      - Find the row in the database where protein_id matches the accession.
+      - If cosine similarity > radius, add 10 to the score.
+      - If cosine similarity > diameter, add 5 to the score.
+      - If cosine similarity > top1_quantile, add 3 to the score.
+    Args:
+        database_path: Path to the cluster database TSV file
+        cosine_similarity: Numpy array (N x k) or path to the cosine similarity CSV
+        accession: Numpy array (N x k) or path to the accession CSV
+    Returns:
+        score_matrix: Numpy array of scores (N x k)
+    """
+    # Load database
+    db = pd.read_csv(database_path, sep='\t')
+    db = db.set_index('protein_id')
+    # Load cosine similarity and accession matrices
+    if isinstance(cosine_similarity, str):
+        cosine_sim = pd.read_csv(cosine_similarity).values
+    else:
+        cosine_sim = cosine_similarity
+    if isinstance(accession, str):
+        accessions = pd.read_csv(accession).values
+    else:
+        accessions = accession
+    n, k = accessions.shape
+    score_matrix = np.zeros((n, k), dtype=int)
+    for i in range(n):
+        for j in range(k):
+            acc = accessions[i, j]
+            cos_sim = cosine_sim[i, j]
+            if acc in db.index:
+                row = db.loc[acc]
+                score = 0
+                try:
+                    if cos_sim > float(row['radius']):
+                        score += 10
+                    if cos_sim > float(row['diameter']):
+                        score += 5
+                    if cos_sim > float(row['top1_quantile']):
+                        score += 3
+                except Exception as e:
+                    logger.warning(f"Error scoring accession {acc}: {e}")
+                score_matrix[i, j] = score
+            else:
+                logger.warning(f"Accession {acc} not found in database.")
+                score_matrix[i, j] = 0
+    return score_matrix
+
+
 def main():
     """Command line interface for summary statistics."""
     import argparse

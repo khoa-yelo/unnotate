@@ -9,8 +9,8 @@ import pathlib
 from Bio import SeqIO
 from .download_database import download_gdrive_folder
 from .unnotate import unnotate
-from .summary_statistics import compute_summary_statistics
-from .summarize_outputs import summarize_outputs
+from .summary_statistics import compute_summary_statistics, compute_summary_statistics_score
+from .summarize_outputs import summarize_outputs, save_results
 
 # Local import for DNA translation (pyrodigal)
 from .pyrodigal import run_pyrodigal_gv
@@ -93,7 +93,6 @@ def main():
                 sys.exit(1)
             fasta_file = faa_file
             logger.info(f"Using translated protein FASTA: {fasta_file}")
-        
         # Find embeddings and CSV in the database dir
         h5_files = glob.glob(os.path.join(args.database_dir, "*.h5"))
         csv_files = glob.glob(os.path.join(args.database_dir, "*.csv"))
@@ -103,9 +102,8 @@ def main():
         if not csv_files:
             print(f"No .csv UniProt file found in {args.database_dir}", file=sys.stderr)
             sys.exit(1)
-        
-        # Run annotation pipeline
-        unnotate(
+        # Run annotation pipeline (no saving in unnotate)
+        df, accessions, similarity, percent_identity_matrix = unnotate(
             fasta_file=fasta_file,
             database_dir=args.database_dir,
             k=args.k,
@@ -115,7 +113,25 @@ def main():
             faiss_metric=args.faiss_metric,
             use_gpu=use_gpu
         )
-        
+        # Compute score matrix if cluster database exists
+        cluster_db_path = os.path.join(args.database_dir, "uniprot_swiss_clusters_with_pvalues.tsv")
+        score_matrix = None
+        if os.path.exists(cluster_db_path):
+            score_matrix = compute_summary_statistics_score(
+                database_path=cluster_db_path,
+                cosine_similarity=similarity,
+                accession=accessions
+            )
+        # Save all results (including score if available)
+        save_results(
+            output_dir=args.output_dir,
+            df=df,
+            accessions=accessions,
+            similarity=similarity,
+            percent_identity_matrix=percent_identity_matrix,
+            score_matrix=score_matrix,
+            prefix=args.prefix
+        )
         # Compute summary statistics
         logger.info("Computing summary statistics...")
         compute_summary_statistics(
@@ -125,20 +141,16 @@ def main():
             output_dir=args.output_dir,
             prefix=args.prefix
         )
-
         # Post-process outputs (GFF annotation and PDF generation for DNA input)
-        pval_csv = os.path.join(args.output_dir, f"{args.prefix}_pvals.csv")
-        domain_csv = os.path.join(args.output_dir, f"{args.prefix}_domain.csv")
-        cosine_similarity_csv = os.path.join(args.output_dir, f"{args.prefix}_cosine_similarity.csv")
-        query_count = len(pd.read_csv(cosine_similarity_csv))
-        pval_threshold = 0.05 / query_count # 0.05 is the significance level
         summarize_outputs(
             output_dir=args.output_dir,
             prefix=args.prefix,
             input_type=input_type,
             gff_prefix=gff_prefix,
-            pval_csv=pval_csv,
-            pval_threshold=pval_threshold
+            pval_csv=None,
+            pval_threshold=None,
+            score_csv=os.path.join(args.output_dir, f"{args.prefix}_score.csv"),
+            score_threshold=3
         )
     else:
         parser.print_help()
