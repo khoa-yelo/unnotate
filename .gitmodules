@@ -1,3 +1,6 @@
 [submodule "ESMC"]
 	path = ESMC
 	url = https://github.com/khoa-yelo/ESM.git
+[submodule "prophage"]
+	path = prophage
+	url = https://github.com/khoa-yelo/prophage.git
